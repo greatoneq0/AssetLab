@@ -78,16 +78,28 @@
 
   function initPeriodSelects(series) {
     const range = getDateRange(series);
-    if (!range) return;
-    const minY = parseInt(range.min.slice(0, 4), 10);
-    const minM = parseInt(range.min.slice(5, 7), 10);
-    const maxY = parseInt(range.max.slice(0, 4), 10);
-    const maxM = parseInt(range.max.slice(5, 7), 10);
-
     const sy = el("startYear");
     const sm = el("startMonth");
     const ey = el("endYear");
     const em = el("endMonth");
+    const hint = el("period-hint");
+    if (!sy || !sm || !ey || !em) return;
+
+    if (!range) {
+      sy.innerHTML = '<option value="">—</option>';
+      sm.innerHTML = '<option value="">—</option>';
+      ey.innerHTML = '<option value="">—</option>';
+      em.innerHTML = '<option value="">—</option>';
+      sy.disabled = sm.disabled = ey.disabled = em.disabled = true;
+      if (hint) hint.textContent = "데이터가 없어 기간을 설정할 수 없습니다.";
+      return;
+    }
+
+    sy.disabled = sm.disabled = ey.disabled = em.disabled = false;
+    const minY = parseInt(range.min.slice(0, 4), 10);
+    const minM = parseInt(range.min.slice(5, 7), 10);
+    const maxY = parseInt(range.max.slice(0, 4), 10);
+    const maxM = parseInt(range.max.slice(5, 7), 10);
 
     sy.innerHTML = "";
     ey.innerHTML = "";
@@ -103,14 +115,15 @@
       sm.innerHTML += `<option value="${mm}" ${m === minM ? "selected" : ""}>${label}</option>`;
       em.innerHTML += `<option value="${mm}" ${m === maxM ? "selected" : ""}>${label}</option>`;
     }
+    if (hint) hint.textContent = "시작·종료 연/월을 선택하세요.";
   }
 
   function getFilteredSeries() {
     if (!currentSeries || currentSeries.length === 0) return [];
-    const startY = el("startYear").value;
-    const startM = el("startMonth").value;
-    const endY = el("endYear").value;
-    const endM = el("endMonth").value;
+    const sy = el("startYear"), sm = el("startMonth"), ey = el("endYear"), em = el("endMonth");
+    if (!sy || !sm || !ey || !em) return currentSeries;
+    const startY = sy.value, startM = sm.value, endY = ey.value, endM = em.value;
+    if (!startY || !startM || !endY || !endM) return currentSeries;
     const startStr = startY + "-" + startM + "-01";
     const lastDay = new Date(parseInt(endY, 10), parseInt(endM, 10), 0).getDate();
     const endStr = endY + "-" + endM + "-" + String(lastDay).padStart(2, "0");
