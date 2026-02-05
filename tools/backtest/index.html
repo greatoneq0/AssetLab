@@ -28,13 +28,13 @@
         <label>백테스트 기간 (연/월)</label>
         <div class="period-inputs">
           <span>시작</span>
-          <select id="startYear"></select>
-          <select id="startMonth"></select>
+          <select id="startYear" title="시작 연도"><option value="">—</option></select>
+          <select id="startMonth" title="시작 월"><option value="">—</option></select>
           <span>~ 종료</span>
-          <select id="endYear"></select>
-          <select id="endMonth"></select>
+          <select id="endYear" title="종료 연도"><option value="">—</option></select>
+          <select id="endMonth" title="종료 월"><option value="">—</option></select>
         </div>
-        <span class="hint">데이터 로드 후 자동 설정됩니다.</span>
+        <span class="hint" id="period-hint">데이터 로드 후 자동 설정됩니다.</span>
       </div>
       <div class="form-row">
         <label>전략 유형</label>
