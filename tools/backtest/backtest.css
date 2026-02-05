@@ -25,6 +25,10 @@ code { font-family: ui-monospace, monospace; font-size: 12px; padding: 2px 6px; 
 .hint { margin-left: 8px; font-size: 12px; color: var(--muted); }
 .params-block { margin: 10px 0; }
 
+.period-inputs { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+.period-inputs select { min-width: 80px; }
+.period-inputs span { font-size: 13px; color: var(--muted); }
+
 .target-weights .weight-inputs { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 6px; }
 .weight-inputs label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
 .weight-inputs input { width: 70px; padding: 6px 8px; }
