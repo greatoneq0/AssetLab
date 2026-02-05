@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>리밸런싱 백테스트 · AssetLab</title>
+  <link rel="stylesheet" href="../../style.css">
+  <link rel="stylesheet" href="backtest.css">
+</head>
+<body>
+  <div class="wrap">
+    <header class="page-header">
+      <a href="../../index.html" class="back">← AssetLab</a>
+      <h1>리밸런싱 백테스트</h1>
+      <p class="sub">정기 리밸런싱(한국장/미국장 종료 후 1회씩) · 정적/동적/혼합 전략</p>
+    </header>
+
+    <section class="panel data-panel">
+      <h2>데이터</h2>
+      <p class="muted">한국장 종료 후 1회, 미국장 종료 후 1회 시점 가격으로 계산합니다. <code>data/prices.json</code>이 없으면 샘플 데이터를 사용합니다.</p>
+      <div class="data-status" id="data-status">로딩 중…</div>
+      <div class="data-meta" id="data-meta"></div>
+    </section>
+
+    <section class="panel config-panel">
+      <h2>전략 설정</h2>
+      <div class="form-row">
+        <label>전략 유형</label>
+        <select id="strategy">
+          <option value="static">정적 리밸런싱 (주기 고정)</option>
+          <option value="band">동적: 밴드 (비중 이탈 시)</option>
+          <option value="momentum">동적: 모멘텀 비중</option>
+          <option value="mixed">혼합 (정적 + 동적 조합)</option>
+        </select>
+      </div>
+      <div id="params-static" class="params-block">
+        <div class="form-row">
+          <label>리밸런싱 주기 (관측 횟수)</label>
+          <input type="number" id="staticIntervalBars" value="22" min="1" max="252"> <span class="hint">예: 22 ≈ 한 달(거래일 기준)</span>
+        </div>
+        <div class="form-row">
+          <label><input type="checkbox" id="rebalanceOnFirstOfMonth" checked> 매월 1일에도 리밸런싱</label>
+        </div>
+      </div>
+      <div id="params-band" class="params-block" style="display:none">
+        <div class="form-row">
+          <label>밴드 (%)</label>
+          <input type="number" id="bandPct" value="5" min="1" max="20" step="0.5"> <span class="hint">목표 대비 이탈 시 리밸런싱</span>
+        </div>
+      </div>
+      <div id="params-momentum" class="params-block" style="display:none">
+        <div class="form-row">
+          <label>모멘텀 lookback (관측 횟수)</label>
+          <input type="number" id="momentumLookback" value="63" min="5" max="252"> <span class="hint">약 3개월</span>
+        </div>
+      </div>
+      <div id="params-mixed" class="params-block" style="display:none">
+        <p class="muted">아래에서 혼합할 전략을 선택하고, 동일 비중으로 합칩니다. (추후 비중 입력 확장 가능)</p>
+        <div class="form-row">
+          <label><input type="checkbox" class="mix-cb" value="static" data-strategy="static"> 정적</label>
+          <label><input type="checkbox" class="mix-cb" value="band" data-strategy="band"> 밴드</label>
+          <label><input type="checkbox" class="mix-cb" value="momentum" data-strategy="momentum"> 모멘텀</label>
+        </div>
+      </div>
+      <div class="form-row">
+        <label>리밸런싱 시점</label>
+        <select id="rebalancePoint">
+          <option value="both">한국장·미국장 모두</option>
+          <option value="kr">한국장 종료 후만</option>
+          <option value="us">미국장 종료 후만</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label>거래 비용 (bps)</label>
+        <input type="number" id="costBps" value="10" min="0" max="100">
+      </div>
+      <div class="form-row target-weights">
+        <label>목표 비중 (정적/밴드 기준)</label>
+        <div class="weight-inputs" id="weight-inputs"></div>
+      </div>
+      <button type="button" class="btn primary" id="btn-run">백테스트 실행</button>
+    </section>
+
+    <section class="panel result-panel" id="result-panel" style="display:none">
+      <h2>결과</h2>
+      <div class="metrics" id="metrics"></div>
+      <div class="chart-wrap">
+        <canvas id="equity-chart" width="800" height="320"></canvas>
+      </div>
+      <p class="small muted">면책: 과거 수익은 미래를 보장하지 않습니다. 교육/실험 목적입니다.</p>
+    </section>
+  </div>
+
+  <script src="../../js/backtest-engine.js"></script>
+  <script src="../../js/sample-data.js"></script>
+  <script src="backtest-page.js"></script>
+</body>
+</html>
