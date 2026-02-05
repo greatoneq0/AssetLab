@@ -24,6 +24,18 @@
 
     <section class="panel config-panel">
       <h2>전략 설정</h2>
+      <div class="form-row period-row">
+        <label>백테스트 기간 (연/월)</label>
+        <div class="period-inputs">
+          <span>시작</span>
+          <select id="startYear"></select>
+          <select id="startMonth"></select>
+          <span>~ 종료</span>
+          <select id="endYear"></select>
+          <select id="endMonth"></select>
+        </div>
+        <span class="hint">데이터 로드 후 자동 설정됩니다.</span>
+      </div>
       <div class="form-row">
         <label>전략 유형</label>
         <select id="strategy">
