@@ -1,0 +1,1 @@
+FinanceDataReader>=0.9.50
