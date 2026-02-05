@@ -27,7 +27,7 @@ const CONFIG = {
         "헤지: 변동성/통화/금리 민감도에 대한 가벼운 프록시",
         "검증: 워크포워드, 리밸런싱 민감도, 거래비용 스트레스",
       ],
-      footnote: `* 여기에 추후 <span class="kbd">/docs</span> 또는 <span class="kbd">/notebooks</span> 링크를 붙여 확장하세요.`,
+      footnote: `* <a href="tools/backtest/">리밸런싱 백테스트</a>: 정적/동적/혼합 전략을 한국장·미국장 종료 시점 기준으로 백테스트.`,
     },
     {
       id: "structure",
@@ -129,7 +129,8 @@ function render() {
         </p>
 
         <div class="cta">
-          <a class="btn primary" href="#library">📚 자료실 보기</a>
+          <a class="btn primary" href="tools/backtest/">📈 리밸런싱 백테스트</a>
+          <a class="btn" href="#library">📚 자료실 보기</a>
           <a class="btn" href="#models">🧪 모델/실험</a>
           <button class="btn" id="btn-open-readme">📄 README 보기</button>
         </div>
