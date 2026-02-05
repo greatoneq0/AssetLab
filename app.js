@@ -63,6 +63,14 @@ const CONFIG = {
         "문서 확장 시 <span class='kbd'>/docs</span>에 Markdown 추가",
       ],
     },
+    {
+      id: "data-update",
+      span: "span4",
+      title: "📊 가격 데이터 업데이트",
+      desc: "prices.json을 수동으로 갱신합니다. 로컬·GitHub Actions 둘 다 지원.",
+      items: [],
+      customHtml: "data-update-card",
+    },
   ],
 };
 
@@ -85,12 +93,15 @@ function render() {
         .join("");
 
       const foot = sec.footnote ? `<p class="small" style="margin-top:10px;">${sec.footnote}</p>` : "";
+      const listOrCustom = sec.customHtml
+        ? `<div id="${escapeHtml(sec.customHtml)}" class="custom-card-body"></div>`
+        : `<ul class="list">${items}</ul>`;
 
       return `
         <section class="card ${sec.span || ""}" id="${escapeHtml(sec.id)}">
           <h3>${sec.title}</h3>
           <p>${escapeHtml(sec.desc)}</p>
-          <ul class="list">${items}</ul>
+          ${listOrCustom}
           ${foot}
         </section>
       `;
@@ -158,10 +169,37 @@ function render() {
   const btn = document.getElementById("btn-open-readme");
   if (btn) {
     btn.addEventListener("click", () => {
-      // README로 연결하고 싶으면 레포 URL에 맞춰서 /blob/main/README.md 사용
       const readmeUrl = CONFIG.repoUrl.replace(/\/$/, "") + "/blob/main/README.md";
       window.open(readmeUrl, "_blank", "noopener,noreferrer");
     });
+  }
+
+  // 가격 데이터 업데이트 카드
+  const dataUpdateCard = document.getElementById("data-update-card");
+  if (dataUpdateCard) {
+    const base = CONFIG.repoUrl.replace(/\/$/, "");
+    const actionsUrl = base && !base.endsWith("github.com") ? base + "/actions/workflows/update_prices.yml" : null;
+
+    dataUpdateCard.innerHTML = `
+      <div class="update-buttons">
+        ${actionsUrl ? `<a class="btn primary" href="${actionsUrl}" target="_blank" rel="noreferrer" id="btn-actions-update">GitHub Actions로 업데이트</a>` : ""}
+        <button type="button" class="btn" id="btn-copy-cmd">로컬 명령어 복사</button>
+      </div>
+      <p class="small muted" style="margin-top:10px;">
+        로컬: <code>node scripts/update-prices.js</code> 또는 <code>python tools/update_prices.py</code>
+      </p>
+    `;
+
+    const copyBtn = document.getElementById("btn-copy-cmd");
+    if (copyBtn) {
+      copyBtn.addEventListener("click", () => {
+        const cmd = "node scripts/update-prices.js";
+        navigator.clipboard.writeText(cmd).then(
+          () => { copyBtn.textContent = "복사됨!"; setTimeout(() => { copyBtn.textContent = "로컬 명령어 복사"; }, 1500); },
+          () => { copyBtn.textContent = "복사 실패"; setTimeout(() => { copyBtn.textContent = "로컬 명령어 복사"; }, 1500); }
+        );
+      });
+    }
   }
 }
 
