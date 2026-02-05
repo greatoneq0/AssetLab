@@ -45,6 +45,7 @@
           if (!Array.isArray(series) || series.length === 0) throw new Error("Empty series");
           currentSeries = series;
           currentMeta = meta;
+          initPeriodSelects(series);
           const obsCount = (AssetLabBacktest.buildObservations(series, meta.assets || assets)).length;
           showDataStatus("데이터 로드됨: " + series.length + "일 (관측 " + obsCount + "회)", true);
           showDataMeta(meta, obsCount);
@@ -55,6 +56,7 @@
           if (typeof AssetLabSampleData !== "undefined") {
             currentSeries = AssetLabSampleData.generate(2020, 2024, assets);
             currentMeta = { assets };
+            initPeriodSelects(currentSeries);
             const obsCount = AssetLabBacktest.buildObservations(currentSeries, assets).length;
             showDataStatus("샘플 데이터 생성됨 (2020–2024, 관측 " + obsCount + "회)", true);
             showDataMeta(currentMeta, obsCount);
@@ -64,6 +66,55 @@
         });
     }
     tryOne();
+  }
+
+  function getDateRange(series) {
+    if (!series || series.length === 0) return null;
+    const dates = series.map((r) => r.date).filter(Boolean);
+    if (dates.length === 0) return null;
+    const sorted = [...dates].sort();
+    return { min: sorted[0], max: sorted[sorted.length - 1] };
+  }
+
+  function initPeriodSelects(series) {
+    const range = getDateRange(series);
+    if (!range) return;
+    const minY = parseInt(range.min.slice(0, 4), 10);
+    const minM = parseInt(range.min.slice(5, 7), 10);
+    const maxY = parseInt(range.max.slice(0, 4), 10);
+    const maxM = parseInt(range.max.slice(5, 7), 10);
+
+    const sy = el("startYear");
+    const sm = el("startMonth");
+    const ey = el("endYear");
+    const em = el("endMonth");
+
+    sy.innerHTML = "";
+    ey.innerHTML = "";
+    for (let y = minY; y <= maxY; y++) {
+      sy.innerHTML += `<option value="${y}" ${y === minY ? "selected" : ""}>${y}년</option>`;
+      ey.innerHTML += `<option value="${y}" ${y === maxY ? "selected" : ""}>${y}년</option>`;
+    }
+    sm.innerHTML = "";
+    em.innerHTML = "";
+    for (let m = 1; m <= 12; m++) {
+      const mm = String(m).padStart(2, "0");
+      const label = m + "월";
+      sm.innerHTML += `<option value="${mm}" ${m === minM ? "selected" : ""}>${label}</option>`;
+      em.innerHTML += `<option value="${mm}" ${m === maxM ? "selected" : ""}>${label}</option>`;
+    }
+  }
+
+  function getFilteredSeries() {
+    if (!currentSeries || currentSeries.length === 0) return [];
+    const startY = el("startYear").value;
+    const startM = el("startMonth").value;
+    const endY = el("endYear").value;
+    const endM = el("endMonth").value;
+    const startStr = startY + "-" + startM + "-01";
+    const lastDay = new Date(parseInt(endY, 10), parseInt(endM, 10), 0).getDate();
+    const endStr = endY + "-" + endM + "-" + String(lastDay).padStart(2, "0");
+    return currentSeries.filter((r) => r.date >= startStr && r.date <= endStr);
   }
 
   function getTargetWeights() {
@@ -122,7 +173,7 @@
     const ctx = canvas.getContext("2d");
     const w = canvas.width;
     const h = canvas.height;
-    const padding = { top: 12, right: 12, bottom: 24, left: 50 };
+    const padding = { top: 12, right: 12, bottom: 32, left: 50 };
     const plotW = w - padding.left - padding.right;
     const plotH = h - padding.top - padding.bottom;
 
@@ -134,7 +185,7 @@
     const maxY = Math.max(...equity);
     const range = maxY - minY || 1;
     const scaleY = (v) => padding.top + plotH - ((v - minY) / range) * plotH;
-    const scaleX = (i) => padding.left + (i / (equity.length - 1)) * plotW;
+    const scaleX = (i) => padding.left + (i / Math.max(1, equity.length - 1)) * plotW;
 
     ctx.strokeStyle = "rgba(138,208,255,.85)";
     ctx.lineWidth = 2;
@@ -156,6 +207,23 @@
     ctx.fillText("1.0", padding.left - 8, scaleY(1) + 4);
     const last = equity[equity.length - 1];
     ctx.fillText(last.toFixed(2), padding.left - 28, scaleY(last) + 4);
+
+    if (observations && observations.length > 0) {
+      const tickCount = Math.min(6, Math.ceil(equity.length / 100));
+      ctx.textAlign = "center";
+      ctx.fillStyle = "var(--muted)";
+      ctx.font = "10px system-ui";
+      for (let k = 0; k <= tickCount; k++) {
+        const idx = Math.round((k / tickCount) * (equity.length - 1));
+        const obs = observations[idx];
+        if (obs && obs.date) {
+          const label = obs.date.length >= 7 ? obs.date.slice(0, 7) : obs.date;
+          const x = scaleX(idx);
+          ctx.fillText(label, x, h - 8);
+        }
+      }
+      ctx.textAlign = "left";
+    }
   }
 
   function run() {
@@ -163,8 +231,13 @@
       alert("데이터를 먼저 로드해 주세요.");
       return;
     }
+    const filtered = getFilteredSeries();
+    if (filtered.length === 0) {
+      alert("선택한 기간에 해당하는 데이터가 없습니다.");
+      return;
+    }
     const options = buildOptions();
-    const out = AssetLabBacktest.runBacktest(currentSeries, options);
+    const out = AssetLabBacktest.runBacktest(filtered, options);
     const m = out.metrics;
 
     el("result-panel").style.display = "block";
