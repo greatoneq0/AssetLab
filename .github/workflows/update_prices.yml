@@ -21,6 +21,8 @@ on:
 jobs:
   update:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # push를 위해 필요
     steps:
       - uses: actions/checkout@v4
         with:
