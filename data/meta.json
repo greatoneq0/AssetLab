@@ -1,11 +1,33 @@
 {
   "description": "AssetLab 일일 종가 메타 (한국장/미국장 종료 시점)",
   "assets": [
-    { "id": "KODEX200", "name": "KODEX 200", "market": "KR", "currency": "KRW" },
-    { "id": "SPY", "name": "SPDR S&P 500", "market": "US", "currency": "USD" },
-    { "id": "TLT", "name": "iShares 20+ Year Treasury", "market": "US", "currency": "USD" }
+    {
+      "id": "KODEX200",
+      "name": "KODEX 200",
+      "market": "KR",
+      "currency": "KRW"
+    },
+    {
+      "id": "SPY",
+      "name": "SPDR S&P 500",
+      "market": "US",
+      "currency": "USD"
+    },
+    {
+      "id": "TLT",
+      "name": "iShares 20+ Year Treasury",
+      "market": "US",
+      "currency": "USD"
+    }
   ],
-  "defaultWeights": { "KODEX200": 0.3, "SPY": 0.5, "TLT": 0.2 },
-  "rebalancePoints": ["kr", "us"],
-  "updatedAt": null
+  "defaultWeights": {
+    "KODEX200": 0.3,
+    "SPY": 0.5,
+    "TLT": 0.2
+  },
+  "rebalancePoints": [
+    "kr",
+    "us"
+  ],
+  "updatedAt": "2026-02-06T01:30:41Z"
 }
