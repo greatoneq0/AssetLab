@@ -1,0 +1,31 @@
+# 매일 아침(KST) 세계 증시 브리핑을 텔레그램으로 발송
+# 클라우드(GitHub Actions)에서 실행되므로 내 기기 상태와 무관하게 동작합니다.
+name: Daily market news (Telegram)
+
+on:
+  schedule:
+    # 23:03 UTC = 08:03 KST (정시 부하를 피해 3분 비켜둠)
+    - cron: "3 23 * * *"
+  workflow_dispatch: {}   # Actions 탭에서 수동 실행 가능
+
+jobs:
+  brief:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies (optional LLM path)
+        run: pip install anthropic
+
+      - name: Build and send market brief
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_MODEL: ${{ vars.CLAUDE_MODEL }}
+        run: python tools/market_brief.py

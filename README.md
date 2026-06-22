@@ -24,6 +24,18 @@
 
 실제 거래가 아닌 **정기 리밸런싱·변동성 구간 검토**용으로, 장 마감 후 받아온 값으로 전략을 백테스트할 수 있게 구성했습니다.
 
+## 매일 아침 증시 브리핑 (텔레그램)
+
+- **워크플로**: [.github/workflows/daily_market_news.yml](.github/workflows/daily_market_news.yml)
+- **스케줄**: 매일 23:03 UTC(= **08:03 KST**). GitHub 클라우드에서 실행되므로 내 기기 상태와 무관하게 발송됩니다.
+- **스크립트**: [tools/market_brief.py](tools/market_brief.py)
+  - **항상**: Yahoo Finance에서 미국/아시아·유럽/한국 주요 지수 + 원/달러·유가·금의 종가·등락률을 조회해 한국어 요약을 텔레그램으로 발송(무료, API 키 불필요).
+  - **선택**: 시크릿에 `ANTHROPIC_API_KEY`가 있으면 Claude + 웹검색으로 '왜 움직였는지' 뉴스 맥락까지 붙인 풍부한 브리핑으로 자동 업그레이드됩니다.
+- **필요한 설정** (저장소 → Settings → Secrets and variables → Actions):
+  - 시크릿 `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` (필수)
+  - 시크릿 `ANTHROPIC_API_KEY` (선택) / 변수 `CLAUDE_MODEL` (선택, 기본 `claude-opus-4-8`)
+- **수동 실행**: Actions 탭 → "Daily market news (Telegram)" → "Run workflow"
+
 ## GitHub Pages
 
 - 저장소 설정 → Pages → Source: **main** 브랜치, **/ (root)**
