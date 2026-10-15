@@ -122,19 +122,21 @@ def main() -> None:
     before = json.dumps(existing, sort_keys=True)
     for row in rows:
         merge_row(existing, row)
-    if json.dumps(existing, sort_keys=True) == before:
-        print("Confirmed closes unchanged; cache timestamp preserved.")
-        return
-
-    existing["meta"] = existing.get("meta") or {}
-    existing["meta"]["assets"] = existing["meta"].get("assets") or [a["id"] for a in ASSETS]
-    existing["meta"]["start"] = existing["meta"].get("start") or existing["series"][0]["date"]
-    existing["meta"]["end"] = existing["series"][-1]["date"]
-
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    PRICES_PATH.write_text(json.dumps(existing, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
-
+    prices_changed = json.dumps(existing, sort_keys=True) != before
     meta = load_meta()
+    meta_before = json.dumps(meta, sort_keys=True)
+
+    if prices_changed:
+        existing["meta"] = existing.get("meta") or {}
+        existing["meta"]["assets"] = existing["meta"].get("assets") or [a["id"] for a in ASSETS]
+        existing["meta"]["start"] = existing["meta"].get("start") or existing["series"][0]["date"]
+        existing["meta"]["end"] = existing["series"][-1]["date"]
+
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        PRICES_PATH.write_text(json.dumps(existing, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
+        # updatedAt is the price-cache write time, not a successful check time.
+        meta["updatedAt"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
     # Only verified fetched assets gain a date; legacy cache dates are not inferred.
     as_of = meta.setdefault("priceAsOf", {})
     for row in rows:
@@ -142,10 +144,15 @@ def main() -> None:
             point = "kr" if asset["market"] == "KR" else "us"
             if asset["id"] in row[point]:
                 as_of[asset["id"]] = row["date"]
-    meta["updatedAt"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    META_PATH.write_text(json.dumps(meta, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
+    # Verification metadata may need repair even when price bytes did not change.
+    if json.dumps(meta, sort_keys=True) != meta_before:
+        META_PATH.write_text(json.dumps(meta, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
 
-    print("Updated prices.json:", len(existing["series"]), "rows, end:", existing["meta"]["end"])
+    if prices_changed:
+        print("Updated prices.json:", len(existing["series"]), "rows, end:", existing["meta"]["end"])
+    else:
+        print("Confirmed closes unchanged; verified dates saved; cache timestamp preserved.")
+
 
 
 if __name__ == "__main__":

@@ -119,11 +119,12 @@ def test_update_rejects_live_and_stale_rows(monkeypatch):
 def test_unchanged_cache_preserves_timestamp(monkeypatch,tmp_path):
     row={'date':'2026-10-14','kr':{'KODEX200':200},'us':{'KODEX200':200}}
     p=tmp_path/'prices.json';m=tmp_path/'meta.json'
-    p.write_text(json.dumps({'series':[row]}));m.write_text('{"updatedAt":"old"}')
+    p.write_text(json.dumps({'series':[row]}));m.write_text('{"updatedAt":"old","priceAsOf":{"KODEX200":"2026-10-14"}}')
+    original_meta = m.read_bytes()
     monkeypatch.setattr(update,'PRICES_PATH',p);monkeypatch.setattr(update,'META_PATH',m)
     monkeypatch.setattr(update,'fetch_prices',lambda _:[row])
     update.main()
-    assert m.read_text()=='{"updatedAt":"old"}'
+    assert m.read_bytes() == original_meta
 
 
 def test_partial_update_metadata_not_relabel_other_market(monkeypatch,tmp_path):
@@ -133,3 +134,87 @@ def test_partial_update_metadata_not_relabel_other_market(monkeypatch,tmp_path):
     monkeypatch.setattr(update,'fetch_prices',lambda _:[{'date':'2026-10-14','kr':{'KODEX200':200},'us':{'KODEX200':200}}])
     update.main()
     assert json.loads(m.read_text())['priceAsOf']=={'SPY':'2026-10-13','KODEX200':'2026-10-14'}
+
+
+@pytest.mark.parametrize('prior_as_of', [None, '2026-10-13'])
+def test_unchanged_verified_close_repairs_as_of(monkeypatch, tmp_path, prior_as_of):
+    """A cached new-session bar still needs independently verified metadata."""
+    rows = [
+        {'date': day, 'kr': {'KODEX200': 200}, 'us': {'KODEX200': 200}}
+        for day in ('2026-10-13', '2026-10-14')
+    ]
+    p = tmp_path / 'prices.json'
+    m = tmp_path / 'meta.json'
+    p.write_text(json.dumps({'series': rows}))
+    meta = {'updatedAt': 'original-write-time', 'priceAsOf': {'SPY': '2026-10-13'}}
+    if prior_as_of is not None:
+        meta['priceAsOf']['KODEX200'] = prior_as_of
+    m.write_text(json.dumps(meta))
+    original_prices = p.read_bytes()
+    monkeypatch.setattr(update, 'PRICES_PATH', p)
+    monkeypatch.setattr(update, 'META_PATH', m)
+    monkeypatch.setenv('MARKET', 'kr')
+    monkeypatch.setattr(update, 'session_target', lambda *a: ('2026-10-14', '2026-10-13'))
+    monkeypatch.setattr(update.time, 'sleep', lambda _: None)
+    monkeypatch.setattr(update.fdr, 'DataReader', lambda *a: pd.DataFrame(
+        {'Close': [200, 200]}, index=pd.to_datetime(['2026-10-13', '2026-10-14'])))
+    update.main()
+    assert p.read_bytes() == original_prices
+    assert json.loads(m.read_text()) == {
+        'updatedAt': 'original-write-time',
+        'priceAsOf': {'SPY': '2026-10-13', 'KODEX200': '2026-10-14'},
+    }
+
+
+def test_legacy_prices_without_meta_file(monkeypatch, tmp_path):
+    p = tmp_path / 'prices.json'
+    m = tmp_path / 'meta.json'
+    row = {'date': '2026-10-14', 'kr': {'KODEX200': 200}, 'us': {'KODEX200': 200}}
+    p.write_text(json.dumps({'series': [row]}))
+    monkeypatch.setattr(update, 'PRICES_PATH', p)
+    monkeypatch.setattr(update, 'META_PATH', m)
+    monkeypatch.setattr(update, 'fetch_prices', lambda _: [row])
+    update.main()
+    meta = json.loads(m.read_text())
+    assert meta['priceAsOf'] == {'KODEX200': '2026-10-14'}
+    assert meta['updatedAt'] is None
+
+
+@pytest.mark.parametrize('response', ['stale', 'invalid', 'failure'])
+def test_unverified_response_cannot_refresh_metadata(monkeypatch, tmp_path, response):
+    p = tmp_path / 'prices.json'
+    m = tmp_path / 'meta.json'
+    p.write_text('{"series":[]}')
+    m.write_text('{"updatedAt":"old","priceAsOf":{"KODEX200":"2026-10-13"}}')
+    before = (p.read_bytes(), m.read_bytes())
+    monkeypatch.setattr(update, 'PRICES_PATH', p)
+    monkeypatch.setattr(update, 'META_PATH', m)
+    monkeypatch.setenv('MARKET', 'kr')
+    monkeypatch.setattr(update, 'session_target', lambda *a: ('2026-10-14', '2026-10-13'))
+    monkeypatch.setattr(update.time, 'sleep', lambda _: None)
+    def reader(*args):
+        if response == 'failure':
+            raise ConnectionError('provider unavailable')
+        return pd.DataFrame({'Close': [200 if response == 'stale' else float('nan')]},
+                            index=pd.to_datetime(['2026-10-13' if response == 'stale' else '2026-10-14']))
+    monkeypatch.setattr(update.fdr, 'DataReader', reader)
+    with pytest.raises(SystemExit):
+        update.main()
+    assert (p.read_bytes(), m.read_bytes()) == before
+
+
+def test_same_price_new_session_updates_series_and_timestamp(monkeypatch, tmp_path):
+    p = tmp_path / 'prices.json'
+    m = tmp_path / 'meta.json'
+    p.write_text(json.dumps({'series': [
+        {'date': '2026-10-13', 'kr': {'KODEX200': 200}, 'us': {'KODEX200': 200}}]}))
+    m.write_text('{"updatedAt":"old","priceAsOf":{"KODEX200":"2026-10-13"}}')
+    monkeypatch.setattr(update, 'PRICES_PATH', p)
+    monkeypatch.setattr(update, 'META_PATH', m)
+    monkeypatch.setattr(update, 'fetch_prices', lambda _: [
+        {'date': '2026-10-14', 'kr': {'KODEX200': 200}, 'us': {'KODEX200': 200}}])
+    monkeypatch.setattr(update.time, 'strftime', lambda *a: 'new-write-time')
+    update.main()
+    assert [r['date'] for r in json.loads(p.read_text())['series']] == ['2026-10-13', '2026-10-14']
+    assert json.loads(m.read_text()) == {
+        'updatedAt': 'new-write-time', 'priceAsOf': {'KODEX200': '2026-10-14'}}
