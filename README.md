@@ -19,7 +19,7 @@
 - **스케줄**: 평일 07:00 UTC(한국장 종료 후), 22:00 UTC(미국장 종료 후) 각 1회
 - **수동 실행**: Actions 탭 → "Update prices (KR/US close)" → "Run workflow" → market 선택(both/kr/us)
 - **데이터 소스**: Python 스크립트 [tools/update_prices.py](tools/update_prices.py)에서 **FinanceDataReader**로 종가 조회 후 `data/prices.json`, `data/meta.json` 갱신
-  - 한국 주식은 **KRX 소스**로 조회해 안정성을 높였고, 미국은 심볼(SPY, TLT) 직접 조회.
+  - 한국 ETF는 **NAVER 소스**로 조회하고, 미국은 심볼(SPY, TLT) 직접 조회.
   - 요청이 너무 많거나 빠르면 차단될 수 있어 **심볼당 2초 대기**와 최소 요청(하루 2회 × 3종목)으로 차단 위험을 줄였습니다.
 
 실제 거래가 아닌 **정기 리밸런싱·변동성 구간 검토**용으로, 장 마감 후 받아온 값으로 전략을 백테스트할 수 있게 구성했습니다.
@@ -29,11 +29,13 @@
 - **워크플로**: [.github/workflows/daily_market_news.yml](.github/workflows/daily_market_news.yml)
 - **스케줄**: 매일 23:03 UTC(= **08:03 KST**). GitHub 클라우드에서 실행되므로 내 기기 상태와 무관하게 발송됩니다.
 - **스크립트**: [tools/market_brief.py](tools/market_brief.py)
-  - **항상**: Yahoo Finance에서 미국/아시아·유럽/한국 주요 지수 + 원/달러·유가·금의 종가·등락률을 조회해 한국어 요약을 텔레그램으로 발송(무료, API 키 불필요).
-  - **선택**: 시크릿에 `ANTHROPIC_API_KEY`가 있으면 Claude + 웹검색으로 '왜 움직였는지' 뉴스 맥락까지 붙인 풍부한 브리핑으로 자동 업그레이드됩니다.
+  - 주요 지수와 유가·금: 날짜가 확인된 Yahoo 일봉 종가. 공통 기준일은 헤더에, 다른 날짜·가격 기준은 해당 항목에 표시합니다.
+  - 원/달러: 서울 야간 일일 경계(미국 서머타임 06:00, 그 외 07:00 KST)의 날짜·시각·최종 가격이 명시된 언론사 마감 보도만 사용합니다. 확보하지 못하면 확인 불가로 표시하며 Yahoo 환율·15:30 가격·매매기준율로 대체하지 않습니다.
+  - 시장 배경: 공개 RSS/기사 본문의 원인 문장을 짧게 발췌하고 발행시각·원문 링크를 제공합니다. 별도 뉴스 API 키는 필요 없습니다. 기사 미확보 시 원인을 추정하지 않습니다.
 - **필요한 설정** (저장소 → Settings → Secrets and variables → Actions):
-  - 시크릿 `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` (필수)
-  - 시크릿 `ANTHROPIC_API_KEY` (선택) / 변수 `CLAUDE_MODEL` (선택, 기본 `claude-opus-4-8`)
+  - 시크릿 `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` (발송에 필수)
+- **출처·제약**: [시장 브리핑 데이터 기준](docs/market-brief-sources.md)
+- **발송 없는 확인**: `python tools/market_brief.py --dry-run`
 - **수동 실행**: Actions 탭 → "Daily market news (Telegram)" → "Run workflow"
 
 ## GitHub Pages

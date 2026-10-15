@@ -29,13 +29,11 @@ jobs:
             exit 1
           fi
 
-      - name: Install dependencies (optional LLM path)
-        run: pip install -r tools/requirements.txt anthropic
+      - name: Install dependencies
+        run: pip install -r tools/requirements.txt
 
       - name: Build and send market brief
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          CLAUDE_MODEL: ${{ vars.CLAUDE_MODEL }}
         run: python tools/market_brief.py

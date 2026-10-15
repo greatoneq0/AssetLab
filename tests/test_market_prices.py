@@ -99,11 +99,12 @@ def test_failed_fetch_preserves_cache(monkeypatch,tmp_path):
 def test_render_dates_and_dry_run_never_sends(monkeypatch,capsys):
     monkeypatch.setattr(brief,'SYMBOLS',[('코스피','^KS11',2)])
     monkeypatch.setattr(brief,'fetch_quote',lambda *a:{'price':110,'change_pct':10,'date':'2026-10-14'})
-    monkeypatch.delenv('ANTHROPIC_API_KEY',raising=False)
+    monkeypatch.setattr(brief, 'collect_articles', lambda *a: [])
+    monkeypatch.setattr(brief, 'utc_now', lambda: instant('2026-10-15T00:00:00+00:00'))
     monkeypatch.setattr(sys,'argv',['market_brief.py','--dry-run'])
     send=Mock();monkeypatch.setattr(brief,'send_telegram',send)
     assert brief.main()==0
-    assert '2026-10-14 현지 종가' in capsys.readouterr().out
+    assert '기준일 2026-10-14' in capsys.readouterr().out
     send.assert_not_called()
 
 
