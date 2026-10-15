@@ -72,7 +72,7 @@ def fetch_quote(symbol: str, now=None):
             previous, target = days[-2:]
         price, prev = bars[target], bars[previous]
         return {"price": price, "prev": prev, "change_pct": (price-prev)/prev*100,
-                "date": target, "previous_date": previous}
+                "date": target, "previous_date": previous, "timezone": str(tz)}
     except (urllib.error.URLError, KeyError, IndexError, ValueError, TypeError):
         return None
 
@@ -81,12 +81,14 @@ def fmt_num(x: float, decimals: int) -> str:
     return f"{x:,.{decimals}f}"
 
 
-def build_numbers_section(now=None) -> str:
+def build_numbers_section(now=None, quotes=None) -> str:
     now = now or utc_now()
+    if quotes is None:
+        quotes = {sym: fetch_quote(sym, now) for _, sym, _ in SYMBOLS}
     common_date, _ = session_target("KR", now, morning=True)
     lines = [f"🌐 기준일 {common_date} · 각 시장 현지 종가 (예외는 별도 표기)"]
     for name, sym, dec in SYMBOLS:
-        q = fetch_quote(sym, now)
+        q = quotes.get(sym)
         if not q:
             lines.append(f"• {name}: 확정 종가 조회 실패")
             continue
@@ -104,11 +106,12 @@ def build_numbers_section(now=None) -> str:
 
 def build_message(today_kst: str, now=None) -> str:
     now = now or utc_now()
-    numbers = build_numbers_section(now)
-    articles = collect_articles(http_get, now)
+    quotes = {sym: fetch_quote(sym, now) for _, sym, _ in SYMBOLS}
+    numbers = build_numbers_section(now, quotes)
+    articles = collect_articles(http_get, now, quotes)
     fx = build_fx_section(articles, now)
     prefix = f"📊 {today_kst} 세계 증시 브리핑\n\n{numbers}\n\n{fx}\n\n"
-    news = build_news_section(articles, now, budget=3900 - len(prefix.encode('utf-16-le')) // 2)
+    news = build_news_section(articles, now, quotes, budget=3900 - len(prefix.encode('utf-16-le')) // 2)
     return prefix + news + "\n\n※ 투자 참고용이며 매매 판단은 본인 책임입니다."
 
 

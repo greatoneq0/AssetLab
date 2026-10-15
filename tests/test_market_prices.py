@@ -219,3 +219,35 @@ def test_same_price_new_session_updates_series_and_timestamp(monkeypatch, tmp_pa
     assert [r['date'] for r in json.loads(p.read_text())['series']] == ['2026-10-13', '2026-10-14']
     assert json.loads(m.read_text()) == {
         'updatedAt': 'new-write-time', 'priceAsOf': {'KODEX200': '2026-10-14'}}
+
+
+@pytest.mark.parametrize('market', ['kr', 'both'])
+def test_requested_korean_failure_is_not_green_or_cache_refresh(monkeypatch,tmp_path,market):
+    p=tmp_path/'prices.json';m=tmp_path/'meta.json'
+    p.write_text('{"series":[]}');m.write_text('{"updatedAt":"old","priceAsOf":{"KODEX200":"2026-10-13"}}')
+    before=(p.read_bytes(),m.read_bytes())
+    monkeypatch.setattr(update,'PRICES_PATH',p);monkeypatch.setattr(update,'META_PATH',m)
+    monkeypatch.setenv('MARKET',market)
+    monkeypatch.setattr(update,'session_target',lambda *a:('2026-10-14','2026-10-13'))
+    monkeypatch.setattr(update.time,'sleep',lambda _:None)
+    symbols=[]
+    def reader(symbol,*args):
+        symbols.append(symbol)
+        if symbol=='NAVER:069500': raise ValueError('unsupported')
+        return pd.DataFrame({'Close':[100]},index=pd.to_datetime(['2026-10-14']))
+    monkeypatch.setattr(update.fdr,'DataReader',reader)
+    with pytest.raises(SystemExit,match='KODEX200'):
+        update.main()
+    assert (p.read_bytes(),m.read_bytes())==before
+    assert 'NAVER:069500' in symbols and 'KRX:069500' not in symbols
+
+
+def test_us_only_run_does_not_require_korean_close(monkeypatch):
+    monkeypatch.setattr(update.time,'sleep',lambda _:None)
+    fetched=[]
+    def fetch(symbol,market,now):
+        fetched.append(symbol)
+        return ('2026-10-14',100)
+    monkeypatch.setattr(update,'fetch_close',fetch)
+    assert update.fetch_prices('us')[0]['us']=={'SPY':100,'TLT':100}
+    assert fetched==['SPY','TLT']

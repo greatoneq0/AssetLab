@@ -83,12 +83,14 @@ def fetch_prices(market: str, now=None) -> list:
     if market not in {"KR", "US", "BOTH"}:
         raise ValueError("MARKET must be kr, us or both")
     rows = {}
+    failed = []
     for asset in ASSETS:
         if market != "BOTH" and asset["market"] != market:
             continue
         quote = fetch_close(asset["symbol"], asset["market"], now)
         time.sleep(DELAY_BETWEEN_SYMBOLS)
         if quote is None:
+            failed.append(asset["id"])
             continue
         day, price = quote
         row = rows.setdefault(day, {"date": day, "kr": {}, "us": {}})
@@ -97,6 +99,11 @@ def fetch_prices(market: str, now=None) -> list:
             row["us"][asset["id"]] = round(price)
         else:
             row["us"][asset["id"]] = round(price, 2)
+    if failed:
+        # A green workflow must mean all requested assets were verified. Do not
+        # commit a US-only refresh when a requested Korean close failed.
+        raise SystemExit("Missing confirmed closes for " + ", ".join(failed)
+                         + "; cache and metadata unchanged.")
     return [rows[day] for day in sorted(rows)]
 
 

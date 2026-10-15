@@ -15,6 +15,8 @@ def instant(s):
 
 
 NOW = instant('2026-10-15T08:03:00+09:00')
+US_QUOTES = {'^IXIC': {'date': '2026-10-14', 'change_pct': 1.0}}
+NEWS_GOOD = '14일(현지시간) 나스닥은 실적 개선 기대에 힘입어 상승 마감했다.'
 
 
 def article(body='', published='2026-10-15T06:30:00+09:00', **extra):
@@ -102,30 +104,30 @@ def test_article_extraction_ignores_navigation():
 
 
 def test_news_extracts_only_attributed_causes_and_date():
-    a=article('뉴욕증시는 실적 개선 기대에 힘입어 상승했다.')
-    result=news.build_news_section([a],NOW)
+    a=article(NEWS_GOOD)
+    result=news.build_news_section([a],NOW,US_QUOTES)
     assert a['body'] in result and a['url'] in result and '2026-10-15 06:30' in result
-    assert '한국: 확인 가능한 원인 기사 없음' in result
+    assert '한국: 시세와 일치하는 원인 기사 미확인' in result
     a['body']='뉴욕증시는 상승했다.'
-    assert '미국: 확인 가능한 원인 기사 없음' in news.build_news_section([a],NOW)
+    assert '미국: 시세와 일치하는 원인 기사 미확인' in news.build_news_section([a],NOW,US_QUOTES)
     # Do not stitch an unrelated causal sentence onto a price sentence.
     a['body']='뉴욕증시는 상승했다. 비가 온 영향으로 야구 경기가 취소됐다.'
-    assert news.reason_excerpt(a,news.GROUPS['미국']) is None
+    assert news.reason_excerpt(a,'^IXIC',US_QUOTES['^IXIC'],NOW) is None
 
 
 def test_news_excludes_today_intraday_kr_reason_for_yesterday_close():
     a=article('코스피는 금리 인상 우려로 하락했다.', '2026-10-15T14:00:00+09:00')
-    assert '한국: 확인 가능한 원인 기사 없음' in news.build_news_section([a],instant('2026-10-15T17:00:00+09:00'))
+    assert '한국: 시세와 일치하는 원인 기사 미확인' in news.build_news_section([a],instant('2026-10-15T17:00:00+09:00'), {'^KS11': {'date':'2026-10-14','change_pct':-1}})
 
 
 def test_news_partial_failure_and_deduplication(monkeypatch):
     monkeypatch.setattr(news,'FEEDS',[('매일경제','bad'),('매일경제','good'),('매일경제','duplicate')])
     def get(url):
         if url=='bad': raise OSError('offline')
-        if url.startswith('https:'): return b'<div id="article-body">published article</div>'
-        return feed()
-    found=news.collect_articles(get,NOW)
-    assert len(found)==1 and found[0]['body']=='published article'
+        if url.startswith('https:'): return ('<div id="article-body">'+NEWS_GOOD+'</div>').encode()
+        return feed().replace('뉴욕증시'.encode(),'나스닥'.encode())
+    found=news.collect_articles(get,NOW,US_QUOTES)
+    assert len(found)==1 and found[0]['body']==NEWS_GOOD
     assert news.collect_articles(lambda _:b'broken XML',NOW)==[]
 
 
@@ -171,3 +173,98 @@ def test_complete_message_stays_within_telegram_limit(monkeypatch):
     for a in articles:
         if a['body'] in text:
             assert a['url'] in text # never clip a quote's attribution/link
+
+
+@pytest.mark.parametrize('body', [
+    '15일 오전 6시 기준 서울 외환시장에서 원·달러 환율은 주간 1350.0원에 마감했고 야간 1355.0원에 마감했다.',
+    '15일 오전 6시 기준 서울 외환시장에서 원·달러 환율은 1350.0원에 마감할 것으로 예상됐다.',
+])
+def test_fx_ambiguous_or_forecast_is_not_actual_close(body):
+    assert fx.fetch_night_close([article(body)], NOW) is None
+
+
+@pytest.mark.parametrize('body', [
+    '지난주 뉴욕증시는 금리 인하 기대에 힘입어 상승했다.',
+    '내일 뉴욕증시는 실적 개선 기대에 힘입어 상승할 전망이다',
+])
+def test_news_history_and_forecast_rejected(body):
+    assert news.reason_excerpt(article(body), news.GROUPS['미국']) is None
+
+
+@pytest.mark.parametrize('body', [
+    NEWS_GOOD.replace('14일', '13일'),
+    NEWS_GOOD.replace('14일', '15일'),
+    NEWS_GOOD.replace('상승 마감했다', '하락 마감했다'),
+    NEWS_GOOD.replace('상승 마감했다', '상승 마감할 전망이다'),
+    NEWS_GOOD.replace('상승 마감했다', '상승 마감하지 않았다'),
+    NEWS_GOOD.replace('상승 마감했다', '장중 상승했다'),
+    NEWS_GOOD.replace('14일(현지시간)', '지난주'),
+    NEWS_GOOD.replace('14일(현지시간)', '내일'),
+    NEWS_GOOD.replace('나스닥', '다우'),
+    NEWS_GOOD.replace('실적 개선 기대에', '13일의 실적 개선 기대에'),
+    NEWS_GOOD.replace('실적 개선 기대에', '지난주 실적 개선 기대에'),
+    NEWS_GOOD.replace('상승 마감했다', '상승 마감했고 다우는 하락 마감했다'),
+])
+def test_news_requires_actual_matching_event(body):
+    assert news.reason_excerpt(article(body), '^IXIC', US_QUOTES['^IXIC'], NOW) is None
+
+
+def test_news_requires_quote_and_rejects_title_repeat():
+    a=article(NEWS_GOOD)
+    assert news.reason_excerpt(a, '^IXIC', None, NOW) is None
+    a['title']=NEWS_GOOD
+    a['body']=''
+    a['description']=NEWS_GOOD+' '+NEWS_GOOD
+    assert news.reason_excerpt(a, '^IXIC', US_QUOTES['^IXIC'], NOW) is None
+
+
+@pytest.mark.parametrize('symbol,name,published', [
+    ('^N225','닛케이','2026-10-13T16:00:00+09:00'),
+    ('^HSI','항셍','2026-10-13T18:00:00+09:00'),
+    ('^GDAXI','DAX','2026-10-14T02:00:00+09:00'),
+    ('^FTSE','FTSE100','2026-10-14T02:00:00+09:00'),
+    ('CL=F','WTI','2026-10-14T06:00:00+09:00'),
+    ('GC=F','금선물','2026-10-14T06:00:00+09:00'),
+])
+def test_non_us_news_uses_its_own_quote_date(symbol,name,published):
+    # US is on Oct 14; the actual instrument quote is on Oct 13.
+    quotes={**US_QUOTES, symbol:{'date':'2026-10-13','change_pct':-1.0}}
+    a=article(f'13일(현지시간) {name}은 금리 인상 우려로 하락 마감했다.',published)
+    text=news.build_news_section([a],NOW,quotes)
+    assert a['body'] in text and '(2026-10-13)' in text
+    quotes[symbol]['date']='2026-10-14'
+    assert a['body'] not in news.build_news_section([a],NOW,quotes)
+
+
+def test_quote_date_explicit_across_month():
+    now=instant('2026-11-01T08:00:00+09:00')
+    q={'date':'2026-10-30','change_pct':1}
+    a=article('30일 코스피는 실적 개선 기대에 힘입어 상승 마감했다.','2026-11-01T06:00:00+09:00')
+    assert news.reason_excerpt(a,'^KS11',q,now) is None
+
+
+def test_three_article_quota_is_after_event_validation(monkeypatch):
+    monkeypatch.setattr(news,'FEEDS',[('매일경제','feed')])
+    entries=[]
+    bodies={}
+    for i in range(5):
+        url=f'https://www.mk.co.kr/news/stock/{i}'
+        entries.append(f'<item><title>나스닥 마감 {i}</title><link>{url}</link><pubDate>Wed, 14 Oct 2026 21:30:00 GMT</pubDate></item>')
+        bodies[url]= NEWS_GOOD.replace('14일','13일') if i<4 else NEWS_GOOD
+    def get(url):
+        if url=='feed': return ('<rss><channel>'+''.join(entries)+'</channel></rss>').encode()
+        return ('<div id="article-body">'+bodies[url]+'</div>').encode()
+    found=news.collect_articles(get,NOW,US_QUOTES)
+    assert len(found)==1 and found[0]['url'].endswith('/4')
+
+
+def test_quotes_fetched_once_and_shared_with_news(monkeypatch):
+    monkeypatch.setattr(brief,'SYMBOLS',[('나스닥','^IXIC',2)])
+    get=Mock(return_value={'date':'2026-10-14','change_pct':1,'price':100})
+    monkeypatch.setattr(brief,'fetch_quote',get)
+    collect=Mock(return_value=[article(NEWS_GOOD)])
+    monkeypatch.setattr(brief,'collect_articles',collect)
+    text=brief.build_message('10/15(목)',NOW)
+    get.assert_called_once_with('^IXIC',NOW)
+    assert collect.call_args.args[2]['^IXIC'] == get.return_value
+    assert NEWS_GOOD in text

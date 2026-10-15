@@ -47,15 +47,20 @@ def fetch_night_close(articles, now):
         for sentence in re.split(r'(?<=[.!?])\s+', body):
             if len(sentence) > 500:
                 continue
-            prefix = rf'^{close.day}일\s+(?:한국시간\s+)?오전\s*{close.hour}시\s*(?:기준\s*)?서울\s*외환시장'
-            if not re.search(prefix, sentence) or not re.search(r'원[·/ㆍ]?달러\s*환율', sentence):
-                continue
-            # Explicit calendar dates/months or a different closing time are not guessed.
-            if re.search(r'\d+년|\d+월', sentence):
-                continue
-            value = re.search(r'([0-9][0-9,]*\.[0-9]+)원에\s*(?:거래를\s*)?마감', sentence)
-            if value and valid_price(value.group(1).replace(',', '')):
-                matches.append({'price': float(value.group(1).replace(',', '')),
+            # Full-clause grammar: the timestamp, instrument and *completed*
+            # close must belong to one clause. Never take the first number in a
+            # sentence containing multiple daytime/overnight closing predicates.
+            number = r'(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]+)?'
+            comparison = (rf'(?:전\s*거래일\s*주간거래\s*종가'
+                          rf'\(오후\s*3시\s*30분\)보다\s*{number}원\s*'
+                          rf'(?:내린|오른)\s*)?')
+            clause = (rf'{close.day}일\s+(?:한국시간\s+)?오전\s*{close.hour}시\s*'
+                      rf'(?:기준\s*)?서울\s*외환시장에서\s*원[·/ㆍ]?달러\s*환율은\s*'
+                      rf'{comparison}(?P<price>{number})원에\s*(?:거래를\s*)?'
+                      rf'마감(?:했다|하였다|됐습니다|했습니다)\.?')
+            value = re.fullmatch(clause, sentence.strip())
+            if value and valid_price(value['price'].replace(',', '')):
+                matches.append({'price': float(value['price'].replace(',', '')),
                                 'trading_date': trading_day, 'closed_at': close,
                                 'source': article['source'], 'url': article['url']})
     if not matches or len({q['price'] for q in matches}) != 1:
