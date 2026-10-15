@@ -15,6 +15,8 @@
 """
 
 import datetime
+from zoneinfo import ZoneInfo
+from market_sessions import session_target, valid_price, utc_now
 import json
 import os
 import sys
@@ -47,22 +49,38 @@ def http_get(url: str, timeout: int = 20) -> bytes:
         return resp.read()
 
 
-def fetch_quote(symbol: str):
-    """Yahoo chart API에서 현재가/전일종가를 가져온다. 실패 시 None."""
+def fetch_quote(symbol: str, now=None):
+    """Use dated daily closes, never regularMarketPrice or range-start close."""
+    now = now or utc_now()
     url = (
         "https://query1.finance.yahoo.com/v8/finance/chart/"
-        + urllib.parse.quote(symbol)
-        + "?range=5d&interval=1d"
+        + urllib.parse.quote(symbol) + "?range=3mo&interval=1d"
     )
     try:
-        data = json.loads(http_get(url))
-        meta = data["chart"]["result"][0]["meta"]
-        price = meta.get("regularMarketPrice")
-        prev = meta.get("chartPreviousClose") or meta.get("previousClose")
-        if price is None or prev in (None, 0):
-            return None
-        change_pct = (price - prev) / prev * 100.0
-        return {"price": price, "prev": prev, "change_pct": change_pct}
+        result = json.loads(http_get(url))["chart"]["result"][0]
+        tz = ZoneInfo(result["meta"]["exchangeTimezoneName"])
+        bars = {}
+        closes = result["indicators"]["quote"][0]["close"]
+        for stamp, price in zip(result["timestamp"], closes):
+            if stamp is not None and valid_price(price):
+                day = datetime.datetime.fromtimestamp(stamp, tz).date().isoformat()
+                bars[day] = float(price)
+        market = "KR" if symbol in {"^KS11", "^KQ11"} else (
+            "US" if symbol in {"^GSPC", "^IXIC", "^DJI"} else None)
+        if market:
+            target, previous = session_target(market, now, morning=True)
+            if target not in bars or previous not in bars:
+                return None  # Never silently substitute a stale cached bar.
+        else:
+            # Other exchanges/instruments: conservatively exclude today's live bar.
+            cutoff = now.astimezone(tz).date().isoformat()
+            days = sorted(day for day in bars if day < cutoff)
+            if len(days) < 2:
+                return None
+            previous, target = days[-2:]
+        price, prev = bars[target], bars[previous]
+        return {"price": price, "prev": prev, "change_pct": (price-prev)/prev*100,
+                "date": target, "previous_date": previous}
     except (urllib.error.URLError, KeyError, IndexError, ValueError, TypeError):
         return None
 
@@ -71,18 +89,19 @@ def fmt_num(x: float, decimals: int) -> str:
     return f"{x:,.{decimals}f}"
 
 
-def build_numbers_section() -> str:
+def build_numbers_section(now=None) -> str:
+    now = now or utc_now()
     lines = []
     for name, sym, dec in SYMBOLS:
-        q = fetch_quote(sym)
+        q = fetch_quote(sym, now)
         if not q:
-            lines.append(f"• {name}: 조회 실패")
+            lines.append(f"• {name}: 확정 종가 조회 실패")
             continue
         arrow = "🔺" if q["change_pct"] > 0 else ("🔻" if q["change_pct"] < 0 else "▪️")
         sign = "+" if q["change_pct"] >= 0 else ""
         lines.append(
             f"• {name}: {fmt_num(q['price'], dec)} "
-            f"({arrow}{sign}{q['change_pct']:.2f}%)"
+            f"({arrow}{sign}{q['change_pct']:.2f}%) · {q['date']} 현지 종가"
         )
     return "\n".join(lines)
 
@@ -103,7 +122,8 @@ def build_message(today_kst: str) -> str:
 
     # --- 선택 경로: Claude + 웹검색으로 뉴스 맥락 요약 ---
     try:
-        return build_narrative_with_claude(numbers, today_kst, api_key)
+        narrative = build_narrative_with_claude(numbers, today_kst, api_key)
+        return f"{header}\n\n🌐 확정 종가 (각 시장 현지 기준일)\n{numbers}\n\n{narrative[:2500]}"
     except Exception as e:  # 실패하면 숫자 요약으로 폴백
         sys.stderr.write(f"[warn] Claude 요약 실패, 숫자 요약으로 폴백: {e}\n")
         return (
@@ -124,10 +144,11 @@ def build_narrative_with_claude(numbers: str, today_kst: str, api_key: str) -> s
         f"종가와 등락률입니다.\n\n{numbers}\n\n"
         "웹 검색으로 전일~당일 아침의 세계 증시 뉴스를 확인해, 한국어로 모바일에서 읽기 좋은 "
         "텔레그램 브리핑을 작성하세요. 요구사항:\n"
-        f"- 첫 줄: '📊 {today_kst} 세계 증시 브리핑'\n"
+        "- 제목은 생략하고 뉴스 맥락만 작성하세요.\n"
         "- 섹션: 🇺🇸 미국 / 🌏 아시아·유럽 / 🇰🇷 한국 / 💱 환율·원자재\n"
-        "- 각 섹션 2~4줄, 위 수치를 활용하고 '왜 움직였는지' 핵심 이슈를 사실 위주로.\n"
-        "- 과장 없이 간결하게. 전체 3500자 이내.\n"
+        "- 가격 숫자와 기준일은 본문 앞에 별도로 표시하므로 반복하거나 새 시세로 대체하지 마세요.\n"
+        "- 각 섹션 2~4줄, '왜 움직였는지' 핵심 이슈를 사실 위주로.\n"
+        "- 과장 없이 간결하게. 전체 2400자 이내.\n"
         "- 마지막 줄: '※ 투자 참고용이며 매매 판단은 본인 책임입니다.'\n"
         "- 출력은 텔레그램에 그대로 보낼 본문 텍스트만. 마크다운 헤더(#)나 출처 각주는 넣지 마세요."
     )
@@ -164,7 +185,7 @@ def send_telegram(token: str, chat_id: str, text: str) -> None:
     with urllib.request.urlopen(req, timeout=30) as resp:
         result = json.loads(resp.read())
     if not result.get("ok"):
-        raise RuntimeError(f"텔레그램 전송 실패: {result}")
+        raise RuntimeError("텔레그램 전송 실패")
 
 
 def kst_today() -> str:
@@ -175,6 +196,9 @@ def kst_today() -> str:
 
 
 def main() -> int:
+    if "--dry-run" in sys.argv:
+        print(build_message(kst_today()))
+        return 0
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
     if not token or not chat_id:

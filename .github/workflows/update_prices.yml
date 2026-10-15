@@ -1,5 +1,5 @@
 # 한국장·미국장 종료 후 가격 데이터 갱신 (하루 2회 또는 수동)
-# Python + yfinance, 요청 간 지연으로 차단 위험 최소화
+# Python + FinanceDataReader, 요청 간 지연으로 차단 위험 최소화
 name: Update prices (KR/US close)
 
 on:
@@ -38,7 +38,7 @@ jobs:
 
       - name: Fetch and update prices
         env:
-          MARKET: ${{ github.event.inputs.market || 'both' }}
+          MARKET: ${{ github.event.inputs.market || (github.event.schedule == '0 7 * * 1-5' && 'kr' || 'us') }}
         run: python tools/update_prices.py
 
       - name: Commit and push if changed
