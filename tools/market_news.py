@@ -75,6 +75,23 @@ def parse_feed(raw, source, now):
     return result
 
 
+def body_text(raw):
+    """Keep paragraph boundaries; subtitles must not swallow the lead sentence."""
+    soup = BeautifulSoup(raw, 'html.parser')
+    for node in soup.select('script, style, figure, figcaption'):
+        node.decompose()
+    for br in soup.find_all('br'):
+        br.replace_with('\n')
+    for block in soup.find_all(['p', 'h2', 'h3']):
+        block.insert_before('\n')
+        block.insert_after('\n')
+    return '\n'.join(' '.join(line.split()) for line in soup.get_text(' ').splitlines() if line.strip())
+
+
+def sentences(text):
+    return re.split(r'(?<=[.!?])\s+|\n+', text)
+
+
 def article_body(raw):
     # Decode strictly: never silently accept replacement characters as evidence.
     if isinstance(raw, bytes):
@@ -95,12 +112,12 @@ def article_body(raw):
                     continue
                 for candidate in [node] + node.get('@graph', []):
                     if isinstance(candidate, dict) and candidate.get('articleBody'):
-                        return plain(candidate['articleBody'])
+                        return body_text(candidate['articleBody'])
         except (ValueError, TypeError):
             continue
     # Publisher article containers only. Do not treat the entire page as article text.
     node = soup.select_one('.news_cnt_detail_wrap, #articletxt, #article-body, #article-view-content-div')
-    return plain(str(node)) if node else ''
+    return body_text(str(node)) if node else ''
 
 
 # Symbol-specific evidence. Broad phrases such as "world stocks" cannot prove
@@ -236,7 +253,7 @@ def market_evidence(article, symbol, quote, now):
             return None, 'quote_invalid'
     except (KeyError, ValueError, TypeError):
         return None, 'quote_invalid'
-    sentences = re.split(r'(?<=[.!?])\s+', body)
+    sentences = re.split(r'(?<=[.!?])\s+|\n+', body)
     reason = 'instrument_or_completed_close_missing'
     for i, sentence in enumerate(sentences):
         match = re.search(INSTRUMENTS[symbol][1], sentence)
@@ -294,7 +311,7 @@ def body_news(article, group, target):
     """
     body = re.sub(r'^.*?기자\s*=\s*', '', article.get('body', ''), count=1)
     economic = r'금리|반도체|소비주|물가|인플레|재고|원유|달러|엔화|실적|투자|매도|매수|무역|중국|유가|금값'
-    for sentence in re.split(r'(?<=[.!?])\s+', body)[:6]:
+    for sentence in sentences(body)[:10]:
         if not 15 <= len(sentence) <= 190 or len(sentence.split()) > 25:
             continue
         if re.search(UNSAFE_EVENT, sentence):
@@ -302,7 +319,7 @@ def body_news(article, group, target):
         dates = list(EVENT_DATE.finditer(sentence))
         if dates and not matching_date(sentence, article, next(sym for sym, spec in INSTRUMENTS.items() if spec[0] == group), date.fromisoformat(target)):
             continue
-        if re.search(CAUSE + r'|감소|증가|급감|줄었|늘었|발표|완화', sentence) and re.search(economic, sentence):
+        if re.search(CAUSE + r'|감소|증가|급감|줄었|늘었|발표|완화|공포|경계심|방아쇠', sentence) and re.search(economic, sentence):
             # Avoid unrelated topics: either a market noun or the group's own
             # instrument must appear in the short statement.
             if re.search(GROUPS[group] + r'|증시|주가|시장|투자심리|거래|원유|유가|금리|재고', sentence):
@@ -328,7 +345,7 @@ def session_report(article, group, targets, now):
     body = re.sub(r'^.*?기자\s*=\s*', '', article.get('body', ''), count=1)
     if not body or not re.search(GROUPS[group], body):
         return None, 'session_body_missing_or_topic'
-    sentences = re.split(r'(?<=[.!?])\s+', body)
+    sentences = re.split(r'(?<=[.!?])\s+|\n+', body)
     symbols = [sym for sym, spec in INSTRUMENTS.items() if spec[0] == group]
     for target in sorted(targets, reverse=True):
         for symbol in symbols:

@@ -156,3 +156,13 @@ def test_body_summary_not_replaced_by_headline_and_cross_month_not_reused():
     assert news.body_news(a,'한국','2026-10-15') is None
     a['body']='9월 15일 코스피는 금리 우려로 하락했다. '+KR_CLOSE
     assert news.body_news(a,'한국','2026-10-15') is None
+
+
+def test_realistic_subtitle_and_paragraph_boundaries_preserve_body_news():
+    html=('<div class="news_cnt_detail_wrap"><h2>시황 요약 제목과 별개 부제</h2>'
+          '<p>미국 반도체주 약세 영향으로 코스피 투자심리가 위축됐다.</p>'
+          f'<p>{KR_CLOSE}</p></div>')
+    a=article(news.article_body(html.encode()))
+    assert '\n' in a['body']
+    assert '반도체주 약세' in news.news_excerpt(a,'^KS11',Q,NOW)[0]
+    assert news.news_excerpt(a,'^KS11',Q,NOW)[1]=='accepted_body_news'

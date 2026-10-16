@@ -10,6 +10,7 @@ import argparse
 from datetime import datetime
 import json
 import logging
+import re
 from pathlib import Path
 from bs4 import BeautifulSoup
 from market_news import article_body, news_excerpt, build_news_section, collect_articles, GROUPS, INSTRUMENTS, report_targets, session_report
@@ -85,6 +86,11 @@ def main():
         import hashlib
         suffix = '.xml' if '/rss/' in url or '/feed/' in url else '.html'
         (dest/('request-'+hashlib.sha256(url.encode()).hexdigest()[:12]+suffix)).write_bytes(raw)
+        if 'einfomax.co.kr/news/' in url:
+            body = article_body(raw)
+            logging.info('probe_body url=%s dates=%s close_phrases=%s', url,
+                         re.findall(r'.{0,15}\d{1,2}일.{0,45}', body)[:3],
+                         re.findall(r'.{0,35}(?:마감|마쳤|끝났).{0,12}', body)[:3])
         return raw
     articles = collect_articles(record_get,now,quotes)
     live_output = build_news_section(articles,now,quotes)

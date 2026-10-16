@@ -31,12 +31,12 @@
 - **스크립트**: [tools/market_brief.py](tools/market_brief.py)
   - 주요 지수와 유가·금: 날짜가 확인된 Yahoo 일봉 종가. 공통 기준일은 헤더에, 다른 날짜·가격 기준은 해당 항목에 표시합니다.
   - 원/달러: 서울 야간 일일 경계(미국 서머타임 06:00, 그 외 07:00 KST)의 날짜·시각·최종 가격이 명시된 언론사 마감 보도만 사용합니다. 확보하지 못하면 확인 불가로 표시하며 Yahoo 환율·15:30 가격·매매기준율로 대체하지 않습니다.
-  - 시장 배경: 공개 RSS/기사 본문의 원인 문장을 짧게 발췌하고 발행시각·원문 링크를 제공합니다. 별도 뉴스 API 키는 필요 없습니다. 기사 미확보 시 원인을 추정하지 않습니다.
+  - 시장 배경: 매일경제·한국경제·연합인포맥스 공식 RSS와 기사 본문에서 검증된 세션의 주요 보도를 짧게 발췌하고 발행시각·원문 링크를 제공합니다. 시세와 기사 세션이 다르면 분리해 표시합니다. 별도 뉴스 API 키는 필요 없습니다. 기사 미확보 시 원인을 추정하지 않습니다.
 - **필요한 설정** (저장소 → Settings → Secrets and variables → Actions):
   - 시크릿 `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` (발송에 필수)
 - **출처·제약**: [시장 브리핑 데이터 기준](docs/market-brief-sources.md)
 - **발송 없는 확인**: `python tools/market_brief.py --dry-run`
-- **수동 실행**: Actions 탭 → "Daily market news (Telegram)" → "Run workflow"
+- **수동 실행**: Actions 탭 → "Daily market news (Telegram)" → "Run workflow". 기본 `preview`는 발송하지 않습니다. 승인된 수동 발송은 `send`, 이전 수신 여부까지 확인한 추가 시험만 `approved_retry`를 선택합니다.
 
 ## GitHub Pages
 
