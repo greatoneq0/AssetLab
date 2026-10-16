@@ -289,3 +289,19 @@ Artifact 삭제/만료, 외부에서 직접 실행한 Telegram 발송은 ledger�
 `tests/test_news_evidence.py::test_opening_price_cannot_borrow_another_instruments_closing_verb`
 및 관련 7개 회귀 사례를 추가했다. 수정 후 해당 파일 36개, 전체 142개 테스트가
 통과했다. 추가 Telegram 발송이나 main 병합은 수행하지 않았다.
+
+## 발송 artifact 출처 검증
+
+발송 장부는 이름만으로 수락하지 않는다. GitHub API의 artifact.workflow_run과
+실제 run/attempt metadata를 교차 확인한다. 같은 저장소의 정확한
+`daily_market_news.yml` workflow ID와 경로, head SHA/branch, 이름의 run ID/attempt가
+일치해야 한다. schedule은 기본 브랜치만, workflow_dispatch는 기본 브랜치와
+사용자가 수동 검증을 승인한 `codex/fix-market-close-dates`만 허용한다.
+PR/push/다른 workflow/다른 브랜치/외부 저장소의 기록은 사유를 로그에 남기고 무시한다.
+재실행은 artifact 생성 시각이 해당 attempt 시작 이후, 다음 attempt 시작 이전인지
+확인한다. API 오류나 잘못된 시각은 발송을 중단하며 장부가 비었다고 간주하지 않는다.
+
+위조 sent에 의한 발송 억제, 위조 rejected에 의한 정상 started 해제, run/attempt
+사칭, fork/이벤트/브랜치/workflow 불일치를 모의 데이터로 검증했다. 실제 악성
+artifact나 Telegram 발송은 만들지 않았다. 정상 예약 및 승인된 수동 브랜치,
+재실행 장부, 기존 뉴스·종가 회귀를 포함해 로컬 전체 163개 테스트가 통과했다.

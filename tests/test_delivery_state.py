@@ -33,12 +33,101 @@ def test_other_days_and_unrelated_artifacts_do_not_block():
     assert delivery_decision(names('sent'), '2026-10-17')[0]=='send'
     assert delivery_decision(['market-brief-preview-123-1'],DAY)[0]=='send'
 
+def ledger_fixture():
+    from copy import deepcopy
+    run = dict(id=123, workflow_id=7, path='.github/workflows/daily_market_news.yml',
+               repository={'id': 9}, head_repository={'id': 9}, head_branch='main',
+               head_sha='abc', event='schedule', run_attempt=1,
+               run_started_at='2026-10-15T23:00:00Z')
+    artifact = dict(id=1, name=names('sent')[0], created_at='2026-10-15T23:02:00Z',
+                    workflow_run=dict(id=123, repository_id=9, head_repository_id=9,
+                                      head_branch='main', head_sha='abc'))
+    api = {'': {'id':9,'default_branch':'main'},
+           '/actions/workflows/daily_market_news.yml': {'id':7,'path':run['path']},
+           '/actions/runs/123': deepcopy(run), '/actions/runs/123/attempts/1': deepcopy(run)}
+    return artifact, api
+
+
+def read_ledger(items, api):
+    return artifact_names(lambda page: {'artifacts': items}, api.__getitem__, DAY)
+
+
 def test_listing_paginates_and_fails_closed_on_api_errors():
+    artifact, api = ledger_fixture()
     pages={1:{'artifacts':[{'name':str(i)} for i in range(100)]},
-           2:{'artifacts':[{'name':names('sent')[0]}]}}
-    assert delivery_decision(artifact_names(pages.__getitem__),DAY)[0]=='skip'
+           2:{'artifacts':[artifact]}}
+    assert delivery_decision(artifact_names(pages.__getitem__,api.__getitem__,DAY),DAY)[0]=='skip'
     with pytest.raises(OSError):
-        artifact_names(Mock(side_effect=OSError('offline')))
+        artifact_names(Mock(side_effect=OSError('offline')),api.__getitem__,DAY)
+    del api['/actions/runs/123']
+    with pytest.raises(KeyError): read_ledger([artifact],api)
+
+
+@pytest.mark.parametrize('event,branch', [('schedule','main'), ('workflow_dispatch','main'),
+                                         ('workflow_dispatch','codex/fix-market-close-dates')])
+def test_trusted_schedule_and_authorized_manual_branches(event,branch):
+    artifact,api=ledger_fixture()
+    artifact['workflow_run']['head_branch']=branch
+    for path in ['/actions/runs/123','/actions/runs/123/attempts/1']:
+        api[path].update(event=event,head_branch=branch)
+    assert read_ledger([artifact],api)==[artifact['name']]
+
+
+@pytest.mark.parametrize('change', [dict(event='pull_request'),dict(event='pull_request_target'),
+    dict(event='push'),dict(head_branch='attacker'),dict(workflow_id=88),
+    dict(path='.github/workflows/ci.yml'),dict(head_repository={'id':99}),
+    dict(repository={'id':99}),dict(head_sha='different'),dict(id=999)])
+def test_untrusted_run_cannot_suppress_delivery(change):
+    artifact,api=ledger_fixture()
+    api['/actions/runs/123'].update(change)
+    assert delivery_decision(read_ledger([artifact],api),DAY)[0]=='send'
+
+
+@pytest.mark.parametrize('change',[dict(id=456),dict(repository_id=99),
+                                  dict(head_repository_id=99),dict(head_sha='other')])
+def test_artifact_origin_must_match_encoded_run_and_repository(change):
+    artifact,api=ledger_fixture()
+    artifact['workflow_run'].update(change)
+    assert read_ledger([artifact],api)==[]
+
+
+def test_missing_origin_is_ignored():
+    artifact,api=ledger_fixture();del artifact['workflow_run']
+    assert read_ledger([artifact],api)==[]
+
+
+def test_forged_rejection_cannot_clear_legitimate_started_attempt():
+    from copy import deepcopy
+    artifact,api=ledger_fixture();artifact['name']=names('started')[0]
+    forged=deepcopy(artifact);forged['name']=names('rejected')[0]
+    forged['workflow_run']['id']=456  # PR uploader, name impersonates run 123
+    assert delivery_decision(read_ledger([artifact,forged],api),DAY)[0]=='blocked'
+
+
+def test_rerun_cannot_impersonate_prior_attempt_but_real_records_survive():
+    from copy import deepcopy
+    artifact,api=ledger_fixture()
+    second=deepcopy(api['/actions/runs/123'])
+    second.update(run_attempt=2,run_started_at='2026-10-15T23:10:00Z')
+    api['/actions/runs/123']=second
+    api['/actions/runs/123/attempts/2']=second
+    assert read_ledger([artifact],api)==[artifact['name']]
+    artifact['created_at']='2026-10-15T23:11:00Z'
+    assert read_ledger([artifact],api)==[]
+    artifact['name']=artifact['name'].replace('-123-1-', '-123-2-')
+    assert read_ledger([artifact],api)==[artifact['name']]
+    artifact['name']=artifact['name'].replace('-123-2-', '-123-3-')
+    assert read_ledger([artifact],api)==[]
+
+
+def test_attempt_metadata_must_match_and_timestamp_failures_fail_closed():
+    artifact,api=ledger_fixture()
+    api['/actions/runs/123/attempts/1']['run_attempt']=2
+    assert read_ledger([artifact],api)==[]
+    api['/actions/runs/123/attempts/1']['run_attempt']=1
+    artifact['created_at']='invalid'
+    with pytest.raises(ValueError): read_ledger([artifact],api)
+
 
 @pytest.mark.parametrize('error,status',[(None,'sent'),(brief.TelegramRejected(),'rejected'),
                                        (TimeoutError(),'unknown'),(ValueError(),'unknown')])
