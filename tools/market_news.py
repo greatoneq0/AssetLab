@@ -48,13 +48,16 @@ def parse_feed(raw, source, now):
             published = parsedate_to_datetime(item.findtext('pubDate', ''))
             url = item.findtext('link', '').strip()
             if published.tzinfo is None or not safe_link(url):
+                LOG.info('feed_item rejected=timezone_or_link url=%s published=%s', url, item.findtext('pubDate', ''))
                 continue
             if not now - timedelta(hours=72) <= published <= now:
+                LOG.info('feed_item rejected=publication_window url=%s published=%s', url, published.isoformat())
                 continue
             result.append({'title': plain(item.findtext('title')), 'url': url,
                            'published': published, 'source': source,
                            'description': plain(item.findtext('description')), 'body': ''})
         except (ValueError, TypeError, OverflowError):
+            LOG.info('feed_item rejected=invalid_date published=%s link=%s', item.findtext('pubDate', ''), item.findtext('link', ''))
             continue
     return result
 

@@ -79,7 +79,14 @@ def main():
     print(example)
     now = utc_now()
     quotes = {symbol:fetch_quote(symbol,now) for _,symbol,_ in SYMBOLS}
-    articles = collect_articles(http_get,now,quotes)
+    print('LIVE_QUOTES ' + json.dumps(quotes, ensure_ascii=False))
+    def record_get(url):
+        raw = http_get(url)
+        if '/rss/' in url or '/feed/' in url:
+            import hashlib
+            (dest/('feed-'+hashlib.sha256(url.encode()).hexdigest()[:8]+'.xml')).write_bytes(raw)
+        return raw
+    articles = collect_articles(record_get,now,quotes)
     (dest/'live-output.txt').write_text(build_news_section(articles,now,quotes))
     report = dict(checked_at=now.isoformat(),references=results,live_quotes=quotes,
                   live_selected_urls=[a['url'] for a in articles],
