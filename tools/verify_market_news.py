@@ -87,7 +87,9 @@ def main():
             (dest/('feed-'+hashlib.sha256(url.encode()).hexdigest()[:8]+'.xml')).write_bytes(raw)
         return raw
     articles = collect_articles(record_get,now,quotes)
-    (dest/'live-output.txt').write_text(build_news_section(articles,now,quotes))
+    live_output = build_news_section(articles,now,quotes)
+    (dest/'live-output.txt').write_text(live_output)
+    print('LIVE OUTPUT (independent Yahoo snapshot + RSS)\n' + live_output)
     report = dict(checked_at=now.isoformat(),references=results,live_quotes=quotes,
                   live_selected_urls=[a['url'] for a in articles],
                   live_collection_verified=bool(articles) and any(quotes.values()))

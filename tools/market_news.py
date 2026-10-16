@@ -107,6 +107,9 @@ INSTRUMENTS = {
     'CL=F': ('환율·원자재', r'WTI', 'America/New_York'),
     'GC=F': ('환율·원자재', r'금(?:값|선물)', 'America/New_York'),
 }
+LABELS = {'^GSPC':'S&P500', '^IXIC':'나스닥', '^DJI':'다우', '^KS11':'코스피', '^KQ11':'코스닥',
+                 '^N225':'닛케이225', '^HSI':'항셍', '^GDAXI':'DAX', '^FTSE':'FTSE100', 'CL=F':'WTI', 'GC=F':'금선물'}
+
 UNVERIFIED = r'지난|전날|어제|내일|다음|전망|예상|추정|가능|가정|만약|장중'
 DIRECTION = {'상승': 1, '급등': 1, '반등': 1, '하락': -1, '급락': -1, '보합': 0}
 
@@ -266,8 +269,7 @@ def market_evidence(article, symbol, quote, now):
         if directions != {(change > 0) - (change < 0)}:
             reason = 'direction_mismatch'
             continue
-        label = {'^GSPC':'S&P500', '^IXIC':'나스닥', '^DJI':'다우', '^KS11':'코스피', '^KQ11':'코스닥',
-                 '^N225':'닛케이225', '^HSI':'항셍', '^GDAXI':'DAX', '^FTSE':'FTSE100', 'CL=F':'WTI', 'GC=F':'금선물'}[symbol]
+        label = LABELS[symbol]
         return f'{label} {price:,.2f} ({change:+.2f}%) 마감', 'accepted_market_facts'
     return None, reason
 
@@ -334,12 +336,9 @@ def collect_articles(get, now, quotes=None):
 def build_news_section(articles, now, quotes=None, budget=2200):
     quotes = quotes or {}
     lines = ['📰 시장 움직임의 배경 — 검증된 마감 동향과 주요 보도 (발행시각 KST)']
-    used = set()
     for group in GROUPS:
         found = None
         for article in articles:
-            if article['url'] in used:
-                continue
             for symbol, quote in quotes.items():
                 if symbol not in INSTRUMENTS or INSTRUMENTS[symbol][0] != group:
                     continue
@@ -350,10 +349,29 @@ def build_news_section(articles, now, quotes=None, budget=2200):
             if found:
                 break
         if not found:
-            lines.append(f'• {group}: 시세와 일치하는 원인 기사 미확인')
+            # The verified quote snapshot remains useful even if publishers fail.
+            # Clearly label this as prices, never as sourced causal news.
+            trends = []
+            for sym, q in quotes.items():
+                if sym not in INSTRUMENTS or INSTRUMENTS[sym][0] != group or not q:
+                    continue
+                try:
+                    price, change = float(q['price']), float(q['change_pct'])
+                    if price > 0 and math.isfinite(price) and math.isfinite(change):
+                        name = LABELS[sym]
+                        trends.append(f"{name} {price:,.2f} ({change:+.2f}%, {q['date']})")
+                except (KeyError, TypeError, ValueError):
+                    continue
+            if trends:
+                line = f'• {group}: 시세 동향 — ' + '; '.join(trends[:2]) + '\n  해당 세션 기사 본문 근거 미확보'
+                if len(('\n'.join(lines) + line).encode('utf-16-le')) // 2 <= budget - 150:
+                    lines.append(line)
+                else:
+                    lines.append(f'• {group}: 기사 본문 미확보 (시세는 상단 참조)')
+            else:
+                lines.append(f'• {group}: 시세와 일치하는 원인 기사 미확인')
             continue
         article, excerpt, target = found
-        used.add(article['url'])
         stamp = article['published'].astimezone(ZoneInfo('Asia/Seoul')).strftime('%Y-%m-%d %H:%M')
         line = f'• {group} ({target}): {excerpt}\n  {article["source"]} · {stamp}\n  {article["url"]}'
         if len(('\n'.join(lines) + line).encode('utf-16-le')) // 2 > budget - 150:

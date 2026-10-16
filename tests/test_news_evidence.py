@@ -104,3 +104,9 @@ def test_actual_mk_rss_colon_timezone_is_not_discarded():
     result=news.parse_feed(raw,'매일경제',NOW)
     assert len(result)==1 and result[0]['published'].isoformat()=='2026-10-15T17:46:00+09:00'
     assert not news.parse_feed(raw.replace(b' +09:00',b''),'매일경제',NOW)
+
+
+def test_missing_news_shows_verified_prices_without_claiming_a_cause():
+    output=news.build_news_section([],NOW,{'^KS11':Q})
+    assert '시세 동향' in output and '5,554.22' in output
+    assert '기사 본문 근거 미확보' in output and '주요 보도' not in output.splitlines()[1]
