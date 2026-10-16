@@ -166,3 +166,15 @@ def test_realistic_subtitle_and_paragraph_boundaries_preserve_body_news():
     assert '\n' in a['body']
     assert '반도체주 약세' in news.news_excerpt(a,'^KS11',Q,NOW)[0]
     assert news.news_excerpt(a,'^KS11',Q,NOW)[1]=='accepted_body_news'
+
+
+def test_asian_cpi_shock_report_is_body_news_not_a_headline():
+    # Short actual lead, discovered in official Infomax RSS (4439497).
+    body=('15일 아시아 주요 증시는 미국 소비자물가지수(CPI) 충격에 일제히 하락했다.\n'
+          '15일 일본 증시는 기술주를 중심으로 매도세가 집중된 가운데 크게 하락했다.\n'
+          '닛케이225는 4.90% 급락한 64,425.95로 장을 마쳤다.')
+    a=article(body)
+    report,reason=news.session_report(a,'아시아·유럽',{'2026-10-15'},NOW)
+    assert reason=='accepted_session_body_news' and 'CPI' in report['summary']
+    a['body']=body.replace('15일','14일')
+    assert not news.session_report(a,'아시아·유럽',{'2026-10-15'},NOW)[0]

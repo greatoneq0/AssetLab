@@ -309,7 +309,7 @@ def body_news(article, group, target):
     as a substitute for body analysis. Forecasts/history/another event date are
     omitted; inability to find a safe excerpt is explicit in diagnostics.
     """
-    body = re.sub(r'^.*?기자\s*=\s*', '', article.get('body', ''), count=1)
+    body = re.sub(r'^.*?기자\s*=\s*', '', article.get('body', ''), count=1, flags=re.MULTILINE)
     economic = r'금리|반도체|소비주|물가|인플레|재고|원유|달러|엔화|실적|투자|매도|매수|무역|중국|유가|금값'
     for sentence in sentences(body)[:10]:
         if not 15 <= len(sentence) <= 190 or len(sentence.split()) > 25:
@@ -319,7 +319,7 @@ def body_news(article, group, target):
         dates = list(EVENT_DATE.finditer(sentence))
         if dates and not matching_date(sentence, article, next(sym for sym, spec in INSTRUMENTS.items() if spec[0] == group), date.fromisoformat(target)):
             continue
-        if re.search(CAUSE + r'|감소|증가|급감|줄었|늘었|발표|완화|공포|경계심|방아쇠', sentence) and re.search(economic, sentence):
+        if re.search(CAUSE + r'|감소|증가|급감|줄었|늘었|발표|완화|공포|경계심|방아쇠|충격|매도세|매수세', sentence) and re.search(economic, sentence):
             # Avoid unrelated topics: either a market noun or the group's own
             # instrument must appear in the short statement.
             if re.search(GROUPS[group] + r'|증시|주가|시장|투자심리|거래|원유|유가|금리|재고', sentence):
@@ -342,7 +342,7 @@ def session_report(article, group, targets, now):
     A report may cover a newer commodity session than the conservative Yahoo
     snapshot. Its own session is displayed explicitly and never overwrites prices.
     """
-    body = re.sub(r'^.*?기자\s*=\s*', '', article.get('body', ''), count=1)
+    body = re.sub(r'^.*?기자\s*=\s*', '', article.get('body', ''), count=1, flags=re.MULTILINE)
     if not body or not re.search(GROUPS[group], body):
         return None, 'session_body_missing_or_topic'
     sentences = re.split(r'(?<=[.!?])\s+|\n+', body)
@@ -401,7 +401,10 @@ def collect_articles(get, now, quotes=None):
         except (OSError, ValueError, ET.ParseError) as exc:
             LOG.warning('feed url=%s rejected=fetch_or_parse error=%s', url, type(exc).__name__)
             continue
-    ordered = sorted(articles.values(), key=lambda a: a['published'], reverse=True)
+    # Closing reports first: daytime forecasts should not delay the morning brief.
+    ordered = sorted(articles.values(), key=lambda a: (
+        not bool(re.search(r'마감|\[(?:亞증시|뉴욕유가|유럽증시)', a['title'])),
+        -a['published'].timestamp()))
     selected = []
     counts = {group: 0 for group in GROUPS}
     for article in ordered:

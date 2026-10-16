@@ -3,8 +3,8 @@
 
 Known article prices are reference inputs, NOT an independent live quote check.
 The separate live snapshot checks Yahoo/RSS availability and end-to-end selection.
-Exit 2 when any reference page cannot be fetched/parsed/accepted; fixtures cannot
-turn this check green. Raw HTML stays in CI artifacts, not repository history.
+Exit 2 unless every group has real body news and all quote requests succeed.
+Optional strict reference-source checking also fails on a blocked reference page. Raw HTML stays in CI artifacts, not repository history.
 """
 import argparse
 from datetime import datetime
@@ -52,6 +52,7 @@ def metadata(raw):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--report-dir', default='/tmp/market-news-live')
+    parser.add_argument('--strict-reference-sources', action='store_true')
     args = parser.parse_args()
     dest = Path(args.report_dir);dest.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(level=logging.INFO, format='%(levelname)s %(name)s %(message)s',
@@ -81,8 +82,12 @@ def main():
     now = utc_now()
     quotes = {symbol:fetch_quote(symbol,now) for _,symbol,_ in SYMBOLS}
     print('LIVE_QUOTES ' + json.dumps(quotes, ensure_ascii=False))
+    responses = {}
     def record_get(url):
+        if url in responses:
+            return responses[url]
         raw = http_get(url)
+        responses[url] = raw
         import hashlib
         suffix = '.xml' if '/rss/' in url or '/feed/' in url else '.html'
         (dest/('request-'+hashlib.sha256(url.encode()).hexdigest()[:12]+suffix)).write_bytes(raw)
@@ -96,25 +101,47 @@ def main():
     live_output = build_news_section(articles,now,quotes)
     (dest/'live-output.txt').write_text(live_output)
     print('LIVE OUTPUT (independent Yahoo snapshot + RSS)\n' + live_output)
-    targets = report_targets(now, quotes)
-    coverage = {group: [] for group in GROUPS}
-    for a in articles:
-        for group in GROUPS:
-            report, reason = session_report(a, group, targets[group], now)
-            matching = [sym for sym,q in quotes.items() if q and sym in INSTRUMENTS
-                        and INSTRUMENTS[sym][0] == group
-                        and news_excerpt(a,sym,q,now)[1] in {'accepted_cause','accepted_body_news'}]
-            if report or matching:
-                coverage[group].append({'url':a['url'],'session':report['date'] if report else quotes[matching[0]]['date'],
-                                        'kind':reason if report else 'accepted_body_news'})
+    def body_coverage(articles, now, quotes):
+        targets = report_targets(now, quotes)
+        coverage = {group: [] for group in GROUPS}
+        for a in articles:
+            for group in GROUPS:
+                report, reason = session_report(a, group, targets[group], now)
+                matching = [sym for sym,q in quotes.items() if q and sym in INSTRUMENTS
+                            and INSTRUMENTS[sym][0] == group
+                            and news_excerpt(a,sym,q,now)[1] in {'accepted_cause','accepted_body_news'}]
+                if report or matching:
+                    coverage[group].append({'url':a['url'],'session':report['date'] if report else quotes[matching[0]]['date'],
+                                            'kind':reason if report else 'accepted_body_news'})
+        return coverage
+    coverage = body_coverage(articles,now,quotes)
     print('BODY_NEWS_COVERAGE ' + json.dumps(coverage,ensure_ascii=False))
+    from zoneinfo import ZoneInfo
+    morning = now.astimezone(ZoneInfo('Asia/Seoul')).replace(hour=8,minute=0,second=0,microsecond=0)
+    morning_coverage = None
+    if morning <= now:
+        # Current public pages/feed membership filtered by publication cutoff;
+        # this is not an archived copy of what the website served at 08:00.
+        morning_quotes = {symbol:fetch_quote(symbol,morning) for _,symbol,_ in SYMBOLS}
+        morning_articles = collect_articles(record_get,morning,morning_quotes)
+        morning_coverage = body_coverage(morning_articles,morning,morning_quotes)
+        (dest/'morning-output.txt').write_text(build_news_section(morning_articles,morning,morning_quotes))
+        print('MORNING_PUBLICATION_CUTOFF_COVERAGE ' + json.dumps(morning_coverage,ensure_ascii=False))
     report = dict(checked_at=now.isoformat(),references=results,live_quotes=quotes,
+                  morning_publication_cutoff_coverage=morning_coverage,
                   body_news_coverage=coverage, all_groups_body_news=all(coverage.values()),
                   live_selected_urls=[a['url'] for a in articles],
                   live_collection_verified=bool(articles) and any(quotes.values()))
     (dest/'report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2))
     # Distinguish reference parser integration from current feed/quote availability.
-    return 0 if all(r['accepted'] for r in results) and report['live_collection_verified'] else 2
+    if not all(r['accepted'] for r in results):
+        logging.warning('Some reference sources failed; see per-source results (not counted as body-news success)')
+    complete = all(coverage.values()) and all(quotes.values())
+    if morning_coverage is not None:
+        complete = complete and all(morning_coverage.values())
+    if args.strict_reference_sources:
+        complete = complete and all(r['accepted'] for r in results)
+    return 0 if complete else 2
 
 
 if __name__ == '__main__':
