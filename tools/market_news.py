@@ -20,13 +20,17 @@ FEEDS = [
     ('매일경제', 'https://www.mk.co.kr/rss/30100041/'),
     ('매일경제', 'https://www.mk.co.kr/rss/30300018/'),
     ('한국경제', 'https://www.hankyung.com/feed/finance'),
+    # Official list: https://news.einfomax.co.kr/rssIndex.html
+    ('연합인포맥스', 'https://news.einfomax.co.kr/rss/S1N23.xml'),
+    ('연합인포맥스', 'https://news.einfomax.co.kr/rss/S1N21.xml'),
+    ('연합인포맥스', 'https://news.einfomax.co.kr/rss/S1N16.xml'),
 ]
-HOSTS = {'mk.co.kr', 'www.mk.co.kr', 'stock.mk.co.kr', 'www.hankyung.com'}
+HOSTS = {'mk.co.kr', 'www.mk.co.kr', 'stock.mk.co.kr', 'www.hankyung.com', 'news.einfomax.co.kr'}
 GROUPS = {
     '미국': r'뉴욕증시|미국\s*증시|나스닥|S&P\s*500|다우(?:존스)?',
     '한국': r'코스피|코스닥|국내\s*증시',
-    '아시아·유럽': r'유럽\s*증시|닛케이|항셍|일본\s*증시|중국\s*증시|DAX|FTSE',
-    '환율·원자재': r'원[·/ㆍ]?달러|환율|국제유가|금값|WTI',
+    '아시아·유럽': r'유럽\s*증시|亞증시|아시아\s*증시|닛케이|항셍|일본\s*증시|중국\s*증시|DAX|FTSE',
+    '환율·원자재': r'원[·/ㆍ]?달러|환율|국제유가|뉴욕유가|뉴욕금|금값|WTI',
 }
 CAUSE = r'영향|여파|때문|힘입|부담|우려|기대|호재|악재|견인|끌어|압박|탓|따라'
 
@@ -88,7 +92,7 @@ def article_body(raw):
         except (ValueError, TypeError):
             continue
     # Publisher article containers only. Do not treat the entire page as article text.
-    node = soup.select_one('.news_cnt_detail_wrap, #articletxt, #article-body')
+    node = soup.select_one('.news_cnt_detail_wrap, #articletxt, #article-body, #article-view-content-div')
     return plain(str(node)) if node else ''
 
 
