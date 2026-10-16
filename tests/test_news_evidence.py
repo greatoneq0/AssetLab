@@ -27,7 +27,7 @@ def test_actual_oct15_close_without_same_sentence_cause():
     excerpt, reason = news.news_excerpt(a, '^KS11', Q, NOW)
     assert reason == 'accepted_market_facts'
     assert '5,554.22 (-7.57%) 마감' in excerpt
-    assert '주요 보도(제목)' in excerpt and '원인 보도' not in excerpt
+    assert '기사 제목(본문 요약 미확보)' in excerpt and '원인 보도' not in excerpt
     assert KR_HEAD in news.build_news_section([a], NOW, {'^KS11': Q})
 
 

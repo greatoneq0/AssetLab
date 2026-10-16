@@ -24,6 +24,7 @@ FEEDS = [
     ('연합인포맥스', 'https://news.einfomax.co.kr/rss/S1N23.xml'),
     ('연합인포맥스', 'https://news.einfomax.co.kr/rss/S1N21.xml'),
     ('연합인포맥스', 'https://news.einfomax.co.kr/rss/S1N16.xml'),
+    ('연합인포맥스', 'https://news.einfomax.co.kr/rss/S1N9.xml'),
 ]
 HOSTS = {'mk.co.kr', 'www.mk.co.kr', 'stock.mk.co.kr', 'www.hankyung.com', 'news.einfomax.co.kr'}
 GROUPS = {
@@ -51,8 +52,13 @@ def parse_feed(raw, source, now):
         try:
             # MK publishes +09:00; email.utils treats that RFC variant as naive.
             stamp = re.sub(r'([+-]\d{2}):(\d{2})$', r'\1\2', item.findtext('pubDate', '').strip())
-            published = parsedate_to_datetime(stamp)
             url = item.findtext('link', '').strip()
+            if (source == '연합인포맥스' and urlparse(url).hostname == 'news.einfomax.co.kr'
+                    and re.fullmatch(r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}', stamp)):
+                # This publisher's official Korean feed uses its KST wall time.
+                published = datetime.strptime(stamp, '%Y-%m-%d %H:%M:%S').replace(tzinfo=ZoneInfo('Asia/Seoul'))
+            else:
+                published = parsedate_to_datetime(stamp)
             if published.tzinfo is None or not safe_link(url):
                 LOG.info('feed_item rejected=timezone_or_link url=%s published=%s', url, item.findtext('pubDate', ''))
                 continue
@@ -278,6 +284,31 @@ def market_evidence(article, symbol, quote, now):
     return None, reason
 
 
+def body_news(article, group, target):
+    """A short attributed body excerpt, kept separate from price causality.
+
+    Only the lead of a session-verified report is eligible. No headline is used
+    as a substitute for body analysis. Forecasts/history/another event date are
+    omitted; inability to find a safe excerpt is explicit in diagnostics.
+    """
+    body = re.sub(r'^.*?기자\s*=\s*', '', article.get('body', ''), count=1)
+    economic = r'금리|반도체|소비주|물가|인플레|재고|원유|달러|엔화|실적|투자|매도|매수|무역|중국|유가|금값'
+    for sentence in re.split(r'(?<=[.!?])\s+', body)[:6]:
+        if not 15 <= len(sentence) <= 190 or len(sentence.split()) > 25:
+            continue
+        if re.search(UNSAFE_EVENT, sentence):
+            continue
+        dates = list(EVENT_DATE.finditer(sentence))
+        if dates and any(int(d['day']) != date.fromisoformat(target).day for d in dates):
+            continue
+        if re.search(CAUSE, sentence) and re.search(economic, sentence):
+            # Avoid unrelated topics: either a market noun or the group's own
+            # instrument must appear in the short statement.
+            if re.search(GROUPS[group] + r'|증시|주가|시장|투자심리|거래', sentence):
+                return sentence
+    return None
+
+
 def news_excerpt(article, symbol, quote, now):
     cause = reason_excerpt(article, symbol, quote, now)
     if cause:
@@ -286,7 +317,10 @@ def news_excerpt(article, symbol, quote, now):
     if facts:
         # Title is attributed as news, explicitly separate from verified facts.
         title = article['title']
-        headline = f'\n  주요 보도(제목): {title}' if len(title) <= 100 else ''
+        summary = body_news(article, INSTRUMENTS[symbol][0], quote['date'])
+        if summary:
+            return f'마감 동향: {facts}\n  주요 보도(본문): “{summary}”', 'accepted_body_news'
+        headline = f'\n  기사 제목(본문 요약 미확보): {title}' if len(title) <= 100 else ''
         return f'마감 동향: {facts}{headline}', reason
     return None, reason
 
