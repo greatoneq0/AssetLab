@@ -178,3 +178,10 @@ def test_asian_cpi_shock_report_is_body_news_not_a_headline():
     assert reason=='accepted_session_body_news' and 'CPI' in report['summary']
     a['body']=body.replace('15일','14일')
     assert not news.session_report(a,'아시아·유럽',{'2026-10-15'},NOW)[0]
+
+
+def test_unrelated_dated_event_cannot_date_a_market_report():
+    a=article('원유 재고 감소가 유가에 상승 압력을 줬다. '
+              '15일 야구 경기가 열렸다. WTI는 98달러에 거래를 마쳤다.')
+    a['published']=NOW-dt.timedelta(hours=2)
+    assert not news.session_report(a,'환율·원자재',{'2026-10-15'},NOW)[0]

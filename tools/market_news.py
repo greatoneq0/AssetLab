@@ -31,7 +31,7 @@ HOSTS = {'mk.co.kr', 'www.mk.co.kr', 'stock.mk.co.kr', 'www.hankyung.com', 'news
 GROUPS = {
     '미국': r'뉴욕증시|미국\s*증시|나스닥|S&P\s*500|다우(?:존스)?',
     '한국': r'코스피|코스닥|국내\s*증시',
-    '아시아·유럽': r'유럽\s*증시|亞증시|아시아\s*증시|닛케이|항셍|일본\s*증시|중국\s*증시|DAX|FTSE',
+    '아시아·유럽': r'유럽\s*증시|亞증시|아시아\s*(?:주요(?:국)?\s*)?증시|닛케이|항셍|일본\s*증시|중국\s*증시|DAX|FTSE',
     '환율·원자재': r'원[·/ㆍ]?달러|환율|국제유가|뉴욕유가|뉴욕금|금값|WTI',
 }
 CAUSE = r'영향|여파|때문|힘입|부담|우려|기대|호재|악재|견인|끌어|압박|탓|따라'
@@ -353,6 +353,7 @@ def session_report(article, group, targets, now):
                 continue
             for i, anchor in enumerate(sentences[:12]):
                 if (re.search(UNSAFE_EVENT, anchor)
+                        or not re.search(GROUPS[group], anchor)
                         or not matching_date(anchor, article, symbol, date.fromisoformat(target))):
                     continue
                 # A dated sentence plus up to two following sentences constitutes
