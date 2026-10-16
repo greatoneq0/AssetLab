@@ -185,3 +185,28 @@ def test_unrelated_dated_event_cannot_date_a_market_report():
               '15일 야구 경기가 열렸다. WTI는 98달러에 거래를 마쳤다.')
     a['published']=NOW-dt.timedelta(hours=2)
     assert not news.session_report(a,'환율·원자재',{'2026-10-15'},NOW)[0]
+
+
+def test_opening_price_cannot_borrow_another_instruments_closing_verb():
+    body='15일 코스피는 7.57% 하락한 5554.22에 출발했고 코스닥은 1.00% 오른 800.00에 마감했다.'
+    result,reason=news.market_evidence(article(body),'^KS11',Q,NOW)
+    assert result is None
+    assert reason=='instrument_clause_not_completed_close'
+
+
+@pytest.mark.parametrize('predicate',['시작했고','도달했고','거래됐고','움직였고'])
+def test_non_closing_predicates_before_another_index_are_not_shared_closes(predicate):
+    body=f'15일 코스피는 7.57% 하락한 5554.22에 {predicate} 코스닥은 1.00% 오른 800.00에 마감했다.'
+    assert news.market_evidence(article(body),'^KS11',Q,NOW)==(None,'instrument_clause_not_completed_close')
+
+
+def test_actual_closing_instrument_still_accepted_after_other_instrument_open():
+    body='15일 코스피는 7.57% 하락한 5554.22에 출발했고 코스닥은 1.00% 오른 800.00에 마감했다.'
+    q={'date':'2026-10-15','price':800,'change_pct':1}
+    assert news.market_evidence(article(body),'^KQ11',q,NOW)[0]=='코스닥 800.00 (+1.00%) 마감'
+
+
+@pytest.mark.parametrize('separator',['에, ', '에 마감했고 '])
+def test_explicit_and_shared_multi_index_closes_remain_supported(separator):
+    body=f'15일 코스피는 7.57% 하락한 5554.22{separator}코스닥은 1.00% 오른 800.00에 마감했다.'
+    assert news.market_evidence(article(body),'^KS11',Q,NOW)[0]

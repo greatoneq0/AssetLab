@@ -283,13 +283,30 @@ def market_evidence(article, symbol, quote, now):
             clause = clause[:min(ends)]
         # Require the final level attached to 에/로, not just a change amount.
         levels = []
+        level_end = None
         for m in re.finditer(rf'(?:(?P<man>\d+)만)?(?P<n>{NUMBER})(?:포인트|달러)?(?:에|로)', clause):
             levels.append(int(m['man'] or 0) * 10000 + float(m['n'].replace(',', '')))
+            level_end = m.end()
         percentages = [float(n) for n in re.findall(r'(\d+(?:\.\d+)?)%', clause)]
         directions = set(1 if m in {'상승', '급등', '반등', '오른'} else -1 if m in {'하락', '급락', '내린'} else 0
                          for m in re.findall(r'상승|급등|반등|오른|하락|급락|내린|보합', clause))
         if not levels or any(round(n, 2) != round(price, 2) for n in levels):
             reason = 'close_level_mismatch'
+            continue
+        # The sentence-final close may belong ONLY to another instrument.
+        # A selected level needs its own completed-close predicate, or a bare
+        # comma-separated level in the same shared closing enumeration. Never
+        # accept intervening predicates such as 출발했고/도달했고/거래됐고.
+        tail = clause[level_end:]
+        own_close = re.fullmatch(
+            r'\s*(?:각각\s*)?(?:(?:장을|거래를)\s*)?'
+            r'(?:마감(?:했다|하였다|했습니다)|마쳤다)\.?\s*', tail)
+        connected_close = bool(ends) and re.fullmatch(
+            r'\s*(?:(?:장을|거래를)\s*)?(?:마감했|마쳤)(?:고|으며)\s*,?\s*', tail)
+        shared_close = bool(ends) and re.fullmatch(
+            r'\s*,\s*(?:(?:기술주|우량주)\s*중심의\s*)?', tail)
+        if not (own_close or connected_close or shared_close):
+            reason = 'instrument_clause_not_completed_close'
             continue
         if not percentages or any(round(n, 2) != round(abs(change), 2) for n in percentages):
             reason = 'change_percent_mismatch'
