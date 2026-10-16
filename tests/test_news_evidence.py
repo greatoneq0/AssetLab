@@ -117,3 +117,42 @@ def test_only_display_rounding_is_allowed_not_a_cent_or_basis_point_conflict():
     assert news.market_evidence(article(),'^KS11',q,NOW)[0]
     assert not news.market_evidence(article(KR_CLOSE.replace('5554.22','5554.23')),'^KS11',q,NOW)[0]
     assert not news.market_evidence(article(KR_CLOSE.replace('7.57%','7.58%')),'^KS11',q,NOW)[0]
+
+
+def test_official_infomax_kst_date_is_source_scoped():
+    raw=('<rss><channel><item><title>뉴욕유가 마감</title><link>https://news.einfomax.co.kr/news/articleView.html?idxno=1</link>'
+         '<pubDate>2026-10-16 06:00:00</pubDate></item></channel></rss>').encode()
+    assert news.parse_feed(raw,'연합인포맥스',NOW)[0]['published'].utcoffset()==dt.timedelta(hours=9)
+    assert news.parse_feed(raw,'매일경제',NOW)==[]
+
+
+def test_newer_commodity_news_does_not_relabel_older_price_session():
+    a=article('국제유가는 원유 재고 감소 영향으로 상승했다. '
+              '15일(현지시간) WTI는 3.00% 오른 98.00달러에 거래를 마쳤다.')
+    a['title']='뉴욕유가 마감';a['published']=NOW-dt.timedelta(hours=2)
+    quotes={'CL=F':{'price':95.09,'change_pct':1.01,'date':'2026-10-14'}}
+    result,reason=news.session_report(a,'환율·원자재',{'2026-10-15'},NOW)
+    assert result['date']=='2026-10-15' and reason=='accepted_session_body_news'
+    text=news.build_news_section([a],NOW,quotes)
+    assert '기사 세션 2026-10-15 · 상단 시세와 별도 세션' in text
+    assert '원유 재고 감소' in text
+    assert quotes['CL=F']['date']=='2026-10-14'
+    assert not news.market_evidence(a,'CL=F',quotes['CL=F'],NOW)[0]
+
+
+@pytest.mark.parametrize('change',[
+    ('15일','14일'), ('거래를 마쳤다','거래를 마칠 전망이다'),
+    ('15일','지난 15일'), ('15일','장중 15일'),
+])
+def test_session_news_rejects_history_forecast_and_wrong_day(change):
+    a=article(('국제유가는 원유 재고 감소 영향으로 상승했다. '
+               '15일(현지시간) WTI는 3.00% 오른 98.00달러에 거래를 마쳤다.').replace(*change))
+    a['published']=NOW-dt.timedelta(hours=2)
+    assert not news.session_report(a,'환율·원자재',{'2026-10-15'},NOW)[0]
+
+
+def test_body_summary_not_replaced_by_headline_and_cross_month_not_reused():
+    a=article(KR_CLOSE);a['title']='금리 우려가 증시를 압박했다'
+    assert news.body_news(a,'한국','2026-10-15') is None
+    a['body']='9월 15일 코스피는 금리 우려로 하락했다. '+KR_CLOSE
+    assert news.body_news(a,'한국','2026-10-15') is None

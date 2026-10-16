@@ -12,7 +12,7 @@ import json
 import logging
 from pathlib import Path
 from bs4 import BeautifulSoup
-from market_news import article_body, news_excerpt, build_news_section, collect_articles
+from market_news import article_body, news_excerpt, build_news_section, collect_articles, GROUPS, INSTRUMENTS, report_targets, session_report
 from market_brief import http_get, fetch_quote, SYMBOLS
 from market_sessions import utc_now
 
@@ -82,15 +82,28 @@ def main():
     print('LIVE_QUOTES ' + json.dumps(quotes, ensure_ascii=False))
     def record_get(url):
         raw = http_get(url)
-        if '/rss/' in url or '/feed/' in url:
-            import hashlib
-            (dest/('feed-'+hashlib.sha256(url.encode()).hexdigest()[:8]+'.xml')).write_bytes(raw)
+        import hashlib
+        suffix = '.xml' if '/rss/' in url or '/feed/' in url else '.html'
+        (dest/('request-'+hashlib.sha256(url.encode()).hexdigest()[:12]+suffix)).write_bytes(raw)
         return raw
     articles = collect_articles(record_get,now,quotes)
     live_output = build_news_section(articles,now,quotes)
     (dest/'live-output.txt').write_text(live_output)
     print('LIVE OUTPUT (independent Yahoo snapshot + RSS)\n' + live_output)
+    targets = report_targets(now, quotes)
+    coverage = {group: [] for group in GROUPS}
+    for a in articles:
+        for group in GROUPS:
+            report, reason = session_report(a, group, targets[group], now)
+            matching = [sym for sym,q in quotes.items() if q and sym in INSTRUMENTS
+                        and INSTRUMENTS[sym][0] == group
+                        and news_excerpt(a,sym,q,now)[1] in {'accepted_cause','accepted_body_news'}]
+            if report or matching:
+                coverage[group].append({'url':a['url'],'session':report['date'] if report else quotes[matching[0]]['date'],
+                                        'kind':reason if report else 'accepted_body_news'})
+    print('BODY_NEWS_COVERAGE ' + json.dumps(coverage,ensure_ascii=False))
     report = dict(checked_at=now.isoformat(),references=results,live_quotes=quotes,
+                  body_news_coverage=coverage, all_groups_body_news=all(coverage.values()),
                   live_selected_urls=[a['url'] for a in articles],
                   live_collection_verified=bool(articles) and any(quotes.values()))
     (dest/'report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2))

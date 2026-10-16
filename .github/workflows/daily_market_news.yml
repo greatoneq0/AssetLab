@@ -1,81 +1,90 @@
-# 매일 아침(KST) 세계 증시 브리핑을 텔레그램으로 발송
-# 클라우드(GitHub Actions)에서 실행되므로 내 기기 상태와 무관하게 동작합니다.
 name: Daily market news (Telegram)
-
 on:
   schedule:
-    # 23:00 UTC = 08:00 KST. GitHub scheduling is best-effort, not an arrival SLA.
+    # 23:00 UTC = 08:00 KST. Best-effort start time, not an arrival SLA.
     - cron: "0 23 * * *"
-  workflow_dispatch: {}   # Actions 탭에서 수동 실행 가능
-
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "preview는 발송 없음; send는 이 실행의 발송 승인"
+        type: choice
+        options: [preview, send]
+        default: preview
+      approved_retry:
+        description: "이전 수신 여부를 확인했고 중복 가능성을 포함한 추가 시험 발송을 승인함"
+        type: boolean
+        default: false
 permissions:
   contents: read
-
-# Never overlap deliveries, including manual runs and other branches.
+  actions: read
 concurrency:
   group: daily-market-telegram
   cancel-in-progress: false
-
 jobs:
   brief:
-    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-
-      - name: Delivery day (KST)
-        id: day
-        run: echo "key=$(TZ=Asia/Seoul date +%F)" >> "$GITHUB_OUTPUT"
-
-      - uses: actions/cache/restore@v4
-        id: delivery
-        with:
-          path: .delivery-claim
-          key: telegram-day-${{ steps.day.outputs.key }}
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: tools/requirements.txt
-
-      - name: Check Telegram configuration
+      - run: pip install -r tools/requirements.txt
+      - name: Delivery day
+        id: day
+        run: echo "key=$(TZ=Asia/Seoul date +%F)" >> "$GITHUB_OUTPUT"
+      - name: Build preview before recording any delivery attempt
+        run: python tools/market_brief.py --dry-run > /tmp/market-brief.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: market-brief-preview-${{ github.run_id }}-${{ github.run_attempt }}
+          path: /tmp/market-brief.txt
+          retention-days: 7
+      - name: Check delivery ledger
+        id: gate
+        if: github.event_name == 'schedule' || inputs.mode == 'send'
         env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GH_TOKEN: ${{ github.token }}
+          MANUAL: ${{ github.event_name == 'workflow_dispatch' }}
+          APPROVED_RETRY: ${{ inputs.approved_retry }}
+          DELIVERY_DAY: ${{ steps.day.outputs.key }}
         run: |
-          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
-            echo "::error::Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in repository Actions secrets."
-            exit 1
-          fi
-
-      - name: Install dependencies
-        run: pip install -r tools/requirements.txt
-
-      # Save BEFORE calling Telegram: uncertain delivery must never auto-retry.
-      - name: Claim daily delivery
-        if: steps.delivery.outputs.cache-hit != 'true'
-        run: mkdir -p .delivery-claim && touch .delivery-claim/claimed
-
-      - uses: actions/cache/save@v4
-        if: steps.delivery.outputs.cache-hit != 'true'
-        with:
-          path: .delivery-claim
-          key: telegram-day-${{ steps.day.outputs.key }}
-
-      - uses: actions/cache/restore@v4
-        id: confirm
-        if: steps.delivery.outputs.cache-hit != 'true'
-        with:
-          path: .delivery-claim
-          key: telegram-day-${{ steps.day.outputs.key }}
-          fail-on-cache-miss: true
-
-      - name: Build and send market brief
-        if: steps.delivery.outputs.cache-hit != 'true' && steps.confirm.outputs.cache-hit == 'true'
+          args=()
+          if [ "$MANUAL" = true ]; then args+=(--manual); fi
+          if [ "$APPROVED_RETRY" = true ]; then args+=(--approved-retry); fi
+          python tools/delivery_state.py --day "$DELIVERY_DAY" "${args[@]}"
+      - name: Validate configuration before starting delivery
+        if: steps.gate.outputs.decision == 'send'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python tools/market_brief.py
+        run: test -n "$TELEGRAM_BOT_TOKEN" && test -n "$TELEGRAM_CHAT_ID"
+      - name: Prepare started marker
+        if: steps.gate.outputs.decision == 'send'
+        run: mkdir -p /tmp/delivery-start && echo started > /tmp/delivery-start/status.txt
+      - name: Persist started attempt before calling Telegram
+        if: steps.gate.outputs.decision == 'send'
+        uses: actions/upload-artifact@v4
+        with:
+          name: telegram-v2-${{ steps.day.outputs.key }}-${{ github.run_id }}-${{ github.run_attempt }}-started
+          path: /tmp/delivery-start
+          if-no-files-found: error
+          retention-days: 30
+      - name: Send once and record actual result
+        id: delivery
+        if: steps.gate.outputs.decision == 'send'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          DELIVERY_DAY: ${{ steps.day.outputs.key }}
+        run: python tools/deliver_brief.py --day "$DELIVERY_DAY" --message /tmp/market-brief.txt --state-dir /tmp/delivery-result
+      - name: Persist delivery outcome even on rejection or uncertainty
+        if: always() && steps.delivery.outputs.status != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: telegram-v2-${{ steps.day.outputs.key }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ steps.delivery.outputs.status }}
+          path: /tmp/delivery-result
+          if-no-files-found: error
+          retention-days: 30

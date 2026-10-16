@@ -126,16 +126,33 @@ def build_message(today_kst: str, now=None) -> str:
     return prefix + news + "\n\n※ 투자 참고용이며 매매 판단은 본인 책임입니다."
 
 
+class TelegramRejected(RuntimeError):
+    """Telegram explicitly rejected the request; no successful delivery."""
+
+
 def send_telegram(token: str, chat_id: str, text: str) -> None:
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = json.dumps({"chat_id": chat_id, "text": text}).encode("utf-8")
     req = urllib.request.Request(
         url, data=payload, headers={"Content-Type": "application/json"}
     )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        result = json.loads(resp.read())
-    if not result.get("ok"):
-        raise RuntimeError("텔레그램 전송 실패")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        # Only a parseable explicit API rejection proves non-delivery. Do not
+        # expose exception URLs (Telegram token is embedded in the URL).
+        try:
+            rejected = json.loads(exc.read()).get('ok') is False
+        except (ValueError, AttributeError):
+            rejected = False
+        if 400 <= exc.code < 500 and rejected:
+            raise TelegramRejected('Telegram rejected request') from None
+        raise RuntimeError('Telegram outcome unknown') from None
+    if result.get('ok') is False:
+        raise TelegramRejected('Telegram rejected request')
+    if result.get('ok') is not True:
+        raise RuntimeError('Telegram outcome unknown')
 
 
 def kst_today() -> str:

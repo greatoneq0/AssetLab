@@ -13,6 +13,7 @@ import logging
 
 LOG = logging.getLogger(__name__)
 from seoul_fx import fetch_night_close
+from market_sessions import session_target
 
 # Publisher-owned RSS endpoints, listed at https://www.mk.co.kr/rss.
 FEEDS = [
@@ -192,7 +193,7 @@ def reason_excerpt(article, symbol, quote=None, now=None):
 
 # A separate, less brittle path verifies market facts, not a causal claim.
 EVENT_DATE = re.compile(r'(?:(?P<year>\d{4})년\s*)?(?:(?P<month>\d{1,2})월\s*)?(?P<day>\d{1,2})일')
-CLOSE = r'(?:마감(?:했다|하였다|했습니다)|거래를\s*마쳤다)'
+CLOSE = r'(?:마감(?:했다|하였다|했습니다)|(?:거래를|장을)\s*마쳤다)'
 UNSAFE_EVENT = r'지난|전날|어제|내일|다음|전망|예상|추정|가능|가정|만약|장중|하지\s*않|못했다'
 NUMBER = r'(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]+)?'
 
@@ -299,14 +300,58 @@ def body_news(article, group, target):
         if re.search(UNSAFE_EVENT, sentence):
             continue
         dates = list(EVENT_DATE.finditer(sentence))
-        if dates and any(int(d['day']) != date.fromisoformat(target).day for d in dates):
+        if dates and not matching_date(sentence, article, next(sym for sym, spec in INSTRUMENTS.items() if spec[0] == group), date.fromisoformat(target)):
             continue
-        if re.search(CAUSE, sentence) and re.search(economic, sentence):
+        if re.search(CAUSE + r'|감소|증가|급감|줄었|늘었|발표|완화', sentence) and re.search(economic, sentence):
             # Avoid unrelated topics: either a market noun or the group's own
             # instrument must appear in the short statement.
-            if re.search(GROUPS[group] + r'|증시|주가|시장|투자심리|거래', sentence):
+            if re.search(GROUPS[group] + r'|증시|주가|시장|투자심리|거래|원유|유가|금리|재고', sentence):
                 return sentence
     return None
+
+
+def report_targets(now, quotes):
+    """News session dates are independent of conservative futures quote dates."""
+    us_day, _ = session_target('US', now, morning=True)
+    kr_day, _ = session_target('KR', now, morning=True)
+    return {'미국': {us_day}, '한국': {kr_day}, '환율·원자재': {us_day},
+            '아시아·유럽': {q['date'] for sym, q in quotes.items() if q and sym in INSTRUMENTS
+                            and INSTRUMENTS[sym][0] == '아시아·유럽'}}
+
+
+def session_report(article, group, targets, now):
+    """Verify a dated completed report; do NOT assert a cause of a different quote.
+
+    A report may cover a newer commodity session than the conservative Yahoo
+    snapshot. Its own session is displayed explicitly and never overwrites prices.
+    """
+    body = re.sub(r'^.*?기자\s*=\s*', '', article.get('body', ''), count=1)
+    if not body or not re.search(GROUPS[group], body):
+        return None, 'session_body_missing_or_topic'
+    sentences = re.split(r'(?<=[.!?])\s+', body)
+    symbols = [sym for sym, spec in INSTRUMENTS.items() if spec[0] == group]
+    for target in sorted(targets, reverse=True):
+        for symbol in symbols:
+            if not publication_matches(article, {'date':target}, symbol, now):
+                continue
+            for i, anchor in enumerate(sentences[:12]):
+                if (re.search(UNSAFE_EVENT, anchor)
+                        or not matching_date(anchor, article, symbol, date.fromisoformat(target))):
+                    continue
+                # A dated sentence plus up to two following sentences constitutes
+                # the close report. Another explicit date breaks the association.
+                for j in range(i, min(i+3, len(sentences))):
+                    sentence=sentences[j]
+                    if j > i and EVENT_DATE.search(sentence):
+                        break
+                    if re.search(UNSAFE_EVENT, sentence):
+                        continue
+                    if re.search(GROUPS[group], sentence) and re.search(CLOSE, sentence):
+                        summary=body_news(article,group,target)
+                        if summary:
+                            return {'date':target,'summary':summary}, 'accepted_session_body_news'
+                        return None, 'session_body_summary_missing'
+    return None, 'session_date_or_completed_event_missing'
 
 
 def news_excerpt(article, symbol, quote, now):
@@ -327,6 +372,7 @@ def news_excerpt(article, symbol, quote, now):
 
 def collect_articles(get, now, quotes=None):
     quotes = quotes or {}
+    targets = report_targets(now, quotes)
     articles = {}
     for source, url in FEEDS:
         try:
@@ -349,7 +395,9 @@ def collect_articles(get, now, quotes=None):
                       and publication_matches(article, q, sym, now)
                       and re.search(GROUPS[INSTRUMENTS[sym][0]], article['title'] + ' ' + article['description'])]
         fx_candidate = bool(re.search(r'환율.*(?:6시|7시|06:00|07:00|야간)|(?:6시|7시|야간).*환율', article['title']))
-        if not candidates and not fx_candidate:
+        report_groups = [group for group in GROUPS if targets[group] and counts[group] < 3
+                         and re.search(GROUPS[group], article['title'] + ' ' + article['description'])]
+        if not candidates and not fx_candidate and not report_groups:
             LOG.info('article url=%s rejected=no_quote_window_topic_or_quota', article['url'])
             continue
         try:
@@ -363,6 +411,11 @@ def collect_articles(get, now, quotes=None):
             LOG.info('article url=%s symbol=%s result=%s', article['url'], sym, reason)
             if excerpt:
                 groups.add(INSTRUMENTS[sym][0])
+        for group in report_groups:
+            report, reason = session_report(article, group, targets[group], now)
+            LOG.info('article url=%s group=%s result=%s', article['url'], group, reason)
+            if report:
+                groups.add(group)
         if groups or (fx_candidate and fetch_night_close([article], now)):
             selected.append(article)
             for group in groups:
@@ -374,18 +427,26 @@ def collect_articles(get, now, quotes=None):
 def build_news_section(articles, now, quotes=None, budget=2200):
     quotes = quotes or {}
     lines = ['📰 시장 움직임의 배경 — 검증된 마감 동향과 주요 보도 (발행시각 KST)']
+    targets = report_targets(now, quotes)
     for group in GROUPS:
-        found = None
+        options = []
         for article in articles:
             for symbol, quote in quotes.items():
                 if symbol not in INSTRUMENTS or INSTRUMENTS[symbol][0] != group:
                     continue
-                excerpt, _ = news_excerpt(article, symbol, quote, now)
+                excerpt, reason = news_excerpt(article, symbol, quote, now)
                 if excerpt:
-                    found = (article, excerpt, quote['date'])
-                    break
-            if found:
-                break
+                    rank = 0 if reason in {'accepted_cause', 'accepted_body_news'} else 2
+                    options.append((rank, article, excerpt, quote['date']))
+            report, _ = session_report(article, group, targets[group], now)
+            if report:
+                dates = {q['date'] for sym,q in quotes.items() if q and sym in INSTRUMENTS
+                         and INSTRUMENTS[sym][0] == group}
+                distinction = ' · 상단 시세와 별도 세션' if report['date'] not in dates else ''
+                excerpt = f'주요 보도(본문, 기사 세션 {report["date"]}{distinction}): “{report["summary"]}”'
+                options.append((1, article, excerpt, report['date']))
+        best = min(options, key=lambda item: item[0]) if options else None
+        found = best[1:] if best else None
         if not found:
             # The verified quote snapshot remains useful even if publishers fail.
             # Clearly label this as prices, never as sourced causal news.
