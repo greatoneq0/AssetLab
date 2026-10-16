@@ -110,3 +110,10 @@ def test_missing_news_shows_verified_prices_without_claiming_a_cause():
     output=news.build_news_section([],NOW,{'^KS11':Q})
     assert '시세 동향' in output and '5,554.22' in output
     assert '기사 본문 근거 미확보' in output and '주요 보도' not in output.splitlines()[1]
+
+
+def test_only_display_rounding_is_allowed_not_a_cent_or_basis_point_conflict():
+    q={**Q,'price':5554.22021484375,'change_pct':-7.565388809384138}
+    assert news.market_evidence(article(),'^KS11',q,NOW)[0]
+    assert not news.market_evidence(article(KR_CLOSE.replace('5554.22','5554.23')),'^KS11',q,NOW)[0]
+    assert not news.market_evidence(article(KR_CLOSE.replace('7.57%','7.58%')),'^KS11',q,NOW)[0]

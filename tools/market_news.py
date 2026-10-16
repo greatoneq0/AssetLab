@@ -260,10 +260,10 @@ def market_evidence(article, symbol, quote, now):
         percentages = [float(n) for n in re.findall(r'(\d+(?:\.\d+)?)%', clause)]
         directions = set(1 if m in {'상승', '급등', '반등', '오른'} else -1 if m in {'하락', '급락', '내린'} else 0
                          for m in re.findall(r'상승|급등|반등|오른|하락|급락|내린|보합', clause))
-        if not levels or any(abs(n-price) > 0.011 for n in levels):
+        if not levels or any(round(n, 2) != round(price, 2) for n in levels):
             reason = 'close_level_mismatch'
             continue
-        if not percentages or any(abs(n-abs(change)) > 0.011 for n in percentages):
+        if not percentages or any(round(n, 2) != round(abs(change), 2) for n in percentages):
             reason = 'change_percent_mismatch'
             continue
         if directions != {(change > 0) - (change < 0)}:
