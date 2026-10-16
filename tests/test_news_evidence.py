@@ -85,3 +85,22 @@ def test_encoding_is_strict_and_supports_korean_legacy():
     assert news.article_body(html.encode('cp949'))=='코스피 마감'
     with pytest.raises((UnicodeDecodeError, ValueError)):
         news.article_body(b'<div id="article-body">\xff</div>')
+
+
+def test_next_index_sentence_can_share_explicit_session_but_not_another_date():
+    body=('미국 뉴욕증시가 15일(현지시간) 상승했다. 금리가 내렸다. 투자심리가 회복됐다. '
+          '이날 다우는 1.00% 오른 52000에 거래를 마쳤다. '
+          '나스닥은 0.20% 오른 26000에 마감했다.')
+    a=article(body);a['published']=NOW-dt.timedelta(hours=1)
+    q={'date':'2026-10-15','price':26000,'change_pct':.2}
+    assert news.market_evidence(a,'^IXIC',q,NOW)[0]
+    a['body']=body.replace('이날 다우', '14일 다우')
+    assert not news.market_evidence(a,'^IXIC',q,NOW)[0]
+
+
+def test_actual_mk_rss_colon_timezone_is_not_discarded():
+    raw=('<rss><channel><item><title>코스피 마감</title><link>'+article()['url']+
+         '</link><pubDate>Thu, 15 Oct 2026 17:46:00 +09:00</pubDate></item></channel></rss>').encode()
+    result=news.parse_feed(raw,'매일경제',NOW)
+    assert len(result)==1 and result[0]['published'].isoformat()=='2026-10-15T17:46:00+09:00'
+    assert not news.parse_feed(raw.replace(b' +09:00',b''),'매일경제',NOW)

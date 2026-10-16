@@ -23,7 +23,7 @@ FEEDS = [
 ]
 HOSTS = {'mk.co.kr', 'www.mk.co.kr', 'stock.mk.co.kr', 'www.hankyung.com'}
 GROUPS = {
-    '미국': r'뉴욕증시|미국\s*증시|나스닥|S&P\s*500|다우지수',
+    '미국': r'뉴욕증시|미국\s*증시|나스닥|S&P\s*500|다우(?:존스)?',
     '한국': r'코스피|코스닥|국내\s*증시',
     '아시아·유럽': r'유럽\s*증시|닛케이|항셍|일본\s*증시|중국\s*증시|DAX|FTSE',
     '환율·원자재': r'원[·/ㆍ]?달러|환율|국제유가|금값|WTI',
@@ -45,7 +45,9 @@ def parse_feed(raw, source, now):
     root = ET.fromstring(raw)
     for item in root.findall('.//item'):
         try:
-            published = parsedate_to_datetime(item.findtext('pubDate', ''))
+            # MK publishes +09:00; email.utils treats that RFC variant as naive.
+            stamp = re.sub(r'([+-]\d{2}):(\d{2})$', r'\1\2', item.findtext('pubDate', '').strip())
+            published = parsedate_to_datetime(stamp)
             url = item.findtext('link', '').strip()
             if published.tzinfo is None or not safe_link(url):
                 LOG.info('feed_item rejected=timezone_or_link url=%s published=%s', url, item.findtext('pubDate', ''))
@@ -201,7 +203,7 @@ def matching_date(text, article, symbol, target):
 def market_evidence(article, symbol, quote, now):
     """Match date + individual instrument + closing level + rounded change.
 
-    '이날' can refer to an explicit dated market lead at most three sentences
+    '이날' can refer to an explicit dated market lead at most five sentences
     earlier, with no intervening different date. Multi-index close sentences
     are split at instrument boundaries before checking numbers/direction.
     Returns a concise factual summary, never stitches a cause onto the close.
@@ -230,9 +232,11 @@ def market_evidence(article, symbol, quote, now):
             reason = 'forecast_history_or_intraday'
             continue
         dated = matching_date(sentence, article, symbol, target)
-        if not EVENT_DATE.search(sentence) and sentence.startswith('이날'):
+        continuation = (i > 0 and re.search(CLOSE + r'\.?$', sentences[i-1])
+                        and re.search(GROUPS[INSTRUMENTS[symbol][0]], sentences[i-1]))
+        if not EVENT_DATE.search(sentence) and (sentence.startswith('이날') or continuation):
             # Do not carry a date across a different dated event or a retrospective.
-            for lead in reversed(sentences[max(0, i-3):i]):
+            for lead in reversed(sentences[max(0, i-5):i]):
                 if EVENT_DATE.search(lead):
                     dated = (not re.search(UNSAFE_EVENT, lead)
                              and bool(re.search(GROUPS[INSTRUMENTS[symbol][0]], lead))
