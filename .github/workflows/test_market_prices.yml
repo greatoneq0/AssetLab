@@ -18,3 +18,26 @@ jobs:
           python-version: '3.11'
       - run: pip install -r tools/requirements.txt pytest
       - run: python -m pytest -q
+
+  live-news:
+    # Public requests only: no Telegram environment, no send path, no secrets.
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: tools/requirements.txt
+      - run: pip install -r tools/requirements.txt
+      - name: Verify real Oct 15 reports and current RSS collection (no send)
+        run: python tools/verify_market_news.py --report-dir /tmp/market-news-live
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: market-news-live
+          path: /tmp/market-news-live
+          retention-days: 7

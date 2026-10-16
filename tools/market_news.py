@@ -9,6 +9,9 @@ import xml.etree.ElementTree as ET
 from zoneinfo import ZoneInfo
 from bs4 import BeautifulSoup
 import math
+import logging
+
+LOG = logging.getLogger(__name__)
 from seoul_fx import fetch_night_close
 
 # Publisher-owned RSS endpoints, listed at https://www.mk.co.kr/rss.
@@ -57,6 +60,14 @@ def parse_feed(raw, source, now):
 
 
 def article_body(raw):
+    # Decode strictly: never silently accept replacement characters as evidence.
+    if isinstance(raw, bytes):
+        try:
+            raw = raw.decode('utf-8-sig')
+        except UnicodeDecodeError:
+            raw = raw.decode('cp949')
+    if '\ufffd' in raw:
+        raise ValueError('replacement characters in article')
     soup = BeautifulSoup(raw, 'html.parser')
     # Prefer the publisher's structured article body, never navigation/search snippets.
     for script in soup.find_all('script', type='application/ld+json'):
@@ -79,7 +90,7 @@ def article_body(raw):
 # Symbol-specific evidence. Broad phrases such as "world stocks" cannot prove
 # the direction of an individual index, so only explicit instruments qualify.
 INSTRUMENTS = {
-    '^GSPC': ('미국', r'S&P\s*500', 'America/New_York'),
+    '^GSPC': ('미국', r'(?:스탠더드앤드푸어스\()?S&P\)?\s*500', 'America/New_York'),
     '^IXIC': ('미국', r'나스닥', 'America/New_York'),
     '^DJI': ('미국', r'다우(?:존스)?', 'America/New_York'),
     '^KS11': ('한국', r'코스피', 'Asia/Seoul'),
@@ -161,14 +172,124 @@ def reason_excerpt(article, symbol, quote=None, now=None):
     return None
 
 
+# A separate, less brittle path verifies market facts, not a causal claim.
+EVENT_DATE = re.compile(r'(?:(?P<year>\d{4})년\s*)?(?:(?P<month>\d{1,2})월\s*)?(?P<day>\d{1,2})일')
+CLOSE = r'(?:마감(?:했다|하였다|했습니다)|거래를\s*마쳤다)'
+UNSAFE_EVENT = r'지난|전날|어제|내일|다음|전망|예상|추정|가능|가정|만약|장중|하지\s*않|못했다'
+NUMBER = r'(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]+)?'
+
+
+def matching_date(text, article, symbol, target):
+    dates = list(EVENT_DATE.finditer(text))
+    if len(dates) != 1:
+        return False
+    event = dates[0]
+    published = article['published'].astimezone(ZoneInfo(INSTRUMENTS[symbol][2])).date()
+    if not event['month'] and (published.year, published.month) != (target.year, target.month):
+        return False
+    if not event['year'] and published.year != target.year:
+        return False
+    try:
+        return date(int(event['year'] or target.year), int(event['month'] or target.month), int(event['day'])) == target
+    except ValueError:
+        return False
+
+
+def market_evidence(article, symbol, quote, now):
+    """Match date + individual instrument + closing level + rounded change.
+
+    '이날' can refer to an explicit dated market lead at most three sentences
+    earlier, with no intervening different date. Multi-index close sentences
+    are split at instrument boundaries before checking numbers/direction.
+    Returns a concise factual summary, never stitches a cause onto the close.
+    """
+    if symbol not in INSTRUMENTS or not quote:
+        return None, 'quote_missing'
+    if not publication_matches(article, quote, symbol, now):
+        return None, 'publication_window'
+    body = article.get('body', '')
+    if not body or re.sub(r'\W', '', body) == re.sub(r'\W', '', article['title']):
+        return None, 'body_missing_or_headline_only'
+    try:
+        target = date.fromisoformat(quote['date'])
+        price, change = float(quote['price']), float(quote['change_pct'])
+        if not all(math.isfinite(n) for n in (price, change)) or price <= 0:
+            return None, 'quote_invalid'
+    except (KeyError, ValueError, TypeError):
+        return None, 'quote_invalid'
+    sentences = re.split(r'(?<=[.!?])\s+', body)
+    reason = 'instrument_or_completed_close_missing'
+    for i, sentence in enumerate(sentences):
+        match = re.search(INSTRUMENTS[symbol][1], sentence)
+        if not match or not re.search(CLOSE + r'\.?$', sentence):
+            continue
+        if re.search(UNSAFE_EVENT, sentence):
+            reason = 'forecast_history_or_intraday'
+            continue
+        dated = matching_date(sentence, article, symbol, target)
+        if not EVENT_DATE.search(sentence) and sentence.startswith('이날'):
+            # Do not carry a date across a different dated event or a retrospective.
+            for lead in reversed(sentences[max(0, i-3):i]):
+                if EVENT_DATE.search(lead):
+                    dated = (not re.search(UNSAFE_EVENT, lead)
+                             and bool(re.search(GROUPS[INSTRUMENTS[symbol][0]], lead))
+                             and matching_date(lead, article, symbol, target))
+                    break
+        if not dated:
+            reason = 'event_date_missing_or_mismatch'
+            continue
+        clause = sentence[match.end():]
+        ends = [m.start() for other, spec in INSTRUMENTS.items() if other != symbol
+                for m in [re.search(spec[1], clause)] if m]
+        if ends:
+            clause = clause[:min(ends)]
+        # Require the final level attached to 에/로, not just a change amount.
+        levels = []
+        for m in re.finditer(rf'(?:(?P<man>\d+)만)?(?P<n>{NUMBER})(?:포인트|달러)?(?:에|로)', clause):
+            levels.append(int(m['man'] or 0) * 10000 + float(m['n'].replace(',', '')))
+        percentages = [float(n) for n in re.findall(r'(\d+(?:\.\d+)?)%', clause)]
+        directions = set(1 if m in {'상승', '급등', '반등', '오른'} else -1 if m in {'하락', '급락', '내린'} else 0
+                         for m in re.findall(r'상승|급등|반등|오른|하락|급락|내린|보합', clause))
+        if not levels or any(abs(n-price) > 0.011 for n in levels):
+            reason = 'close_level_mismatch'
+            continue
+        if not percentages or any(abs(n-abs(change)) > 0.011 for n in percentages):
+            reason = 'change_percent_mismatch'
+            continue
+        if directions != {(change > 0) - (change < 0)}:
+            reason = 'direction_mismatch'
+            continue
+        label = {'^GSPC':'S&P500', '^IXIC':'나스닥', '^DJI':'다우', '^KS11':'코스피', '^KQ11':'코스닥',
+                 '^N225':'닛케이225', '^HSI':'항셍', '^GDAXI':'DAX', '^FTSE':'FTSE100', 'CL=F':'WTI', 'GC=F':'금선물'}[symbol]
+        return f'{label} {price:,.2f} ({change:+.2f}%) 마감', 'accepted_market_facts'
+    return None, reason
+
+
+def news_excerpt(article, symbol, quote, now):
+    cause = reason_excerpt(article, symbol, quote, now)
+    if cause:
+        return f'원인 보도: “{cause}”', 'accepted_cause'
+    facts, reason = market_evidence(article, symbol, quote, now)
+    if facts:
+        # Title is attributed as news, explicitly separate from verified facts.
+        title = article['title']
+        headline = f'\n  주요 보도(제목): {title}' if len(title) <= 100 else ''
+        return f'마감 동향: {facts}{headline}', reason
+    return None, reason
+
+
 def collect_articles(get, now, quotes=None):
     quotes = quotes or {}
     articles = {}
     for source, url in FEEDS:
         try:
-            for article in parse_feed(get(url), source, now):
+            raw = get(url)
+            parsed = parse_feed(raw, source, now)
+            LOG.info('feed url=%s items=%d eligible=%d', url, len(ET.fromstring(raw).findall('.//item')), len(parsed))
+            for article in parsed:
                 articles.setdefault(article['url'], article)
-        except (OSError, ValueError, ET.ParseError):
+        except (OSError, ValueError, ET.ParseError) as exc:
+            LOG.warning('feed url=%s rejected=fetch_or_parse error=%s', url, type(exc).__name__)
             continue
     ordered = sorted(articles.values(), key=lambda a: a['published'], reverse=True)
     selected = []
@@ -182,22 +303,30 @@ def collect_articles(get, now, quotes=None):
                       and re.search(GROUPS[INSTRUMENTS[sym][0]], article['title'] + ' ' + article['description'])]
         fx_candidate = bool(re.search(r'환율.*(?:6시|7시|06:00|07:00|야간)|(?:6시|7시|야간).*환율', article['title']))
         if not candidates and not fx_candidate:
+            LOG.info('article url=%s rejected=no_quote_window_topic_or_quota', article['url'])
             continue
         try:
             article['body'] = article_body(get(article['url']))
-        except (OSError, ValueError):
-            pass
-        groups = {INSTRUMENTS[sym][0] for sym in candidates if reason_excerpt(article, sym, quotes[sym], now)}
+            LOG.info('article url=%s body_chars=%d', article['url'], len(article['body']))
+        except (OSError, ValueError) as exc:
+            LOG.warning('article url=%s rejected=body_fetch_or_decode error=%s', article['url'], type(exc).__name__)
+        groups = set()
+        for sym in candidates:
+            excerpt, reason = news_excerpt(article, sym, quotes[sym], now)
+            LOG.info('article url=%s symbol=%s result=%s', article['url'], sym, reason)
+            if excerpt:
+                groups.add(INSTRUMENTS[sym][0])
         if groups or (fx_candidate and fetch_night_close([article], now)):
             selected.append(article)
             for group in groups:
                 counts[group] += 1
+    LOG.info('collection unique=%d selected=%d groups=%s', len(articles), len(selected), counts)
     return selected
 
 
 def build_news_section(articles, now, quotes=None, budget=2200):
     quotes = quotes or {}
-    lines = ['📰 시장 움직임의 배경 — 시세 기준일·방향 확인 기사 (발행시각 KST)']
+    lines = ['📰 시장 움직임의 배경 — 검증된 마감 동향과 주요 보도 (발행시각 KST)']
     used = set()
     for group in GROUPS:
         found = None
@@ -207,7 +336,7 @@ def build_news_section(articles, now, quotes=None, budget=2200):
             for symbol, quote in quotes.items():
                 if symbol not in INSTRUMENTS or INSTRUMENTS[symbol][0] != group:
                     continue
-                excerpt = reason_excerpt(article, symbol, quote, now)
+                excerpt, _ = news_excerpt(article, symbol, quote, now)
                 if excerpt:
                     found = (article, excerpt, quote['date'])
                     break
@@ -219,7 +348,7 @@ def build_news_section(articles, now, quotes=None, budget=2200):
         article, excerpt, target = found
         used.add(article['url'])
         stamp = article['published'].astimezone(ZoneInfo('Asia/Seoul')).strftime('%Y-%m-%d %H:%M')
-        line = f'• {group} ({target}): “{excerpt}”\n  {article["source"]} · {stamp}\n  {article["url"]}'
+        line = f'• {group} ({target}): {excerpt}\n  {article["source"]} · {stamp}\n  {article["url"]}'
         if len(('\n'.join(lines) + line).encode('utf-16-le')) // 2 > budget - 150:
             lines.append(f'• {group}: 기사 표시 분량 초과')
         else:

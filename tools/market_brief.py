@@ -11,6 +11,7 @@ from market_sessions import session_target, valid_price, utc_now
 from market_news import collect_articles, build_news_section
 from seoul_fx import build_fx_section
 import json
+import logging
 import os
 import sys
 import urllib.error
@@ -37,8 +38,18 @@ SYMBOLS = [
 
 def http_get(url: str, timeout: int = 20) -> bytes:
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/json, application/rss+xml, text/html, */*"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return resp.read()
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read()
+            logging.getLogger(__name__).info(
+                'http url=%s status=%s content_type=%s charset=%s bytes=%d',
+                url, resp.status, resp.headers.get_content_type(),
+                resp.headers.get_content_charset(), len(raw))
+            return raw
+    except urllib.error.URLError as exc:
+        logging.getLogger(__name__).warning('http url=%s status=%s error=%s',
+            url, getattr(exc, 'code', 'transport_error'), type(exc).__name__)
+        raise
 
 
 def fetch_quote(symbol: str, now=None):
@@ -135,6 +146,7 @@ def kst_today() -> str:
 
 
 def main() -> int:
+    logging.basicConfig(level=logging.INFO, format='%(levelname)s %(name)s %(message)s')
     if "--dry-run" in sys.argv:
         print(build_message(kst_today()))
         return 0
