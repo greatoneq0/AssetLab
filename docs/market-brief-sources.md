@@ -305,3 +305,42 @@ PR/push/다른 workflow/다른 브랜치/외부 저장소의 기록은 사유를
 사칭, fork/이벤트/브랜치/workflow 불일치를 모의 데이터로 검증했다. 실제 악성
 artifact나 Telegram 발송은 만들지 않았다. 정상 예약 및 승인된 수동 브랜치,
 재실행 장부, 기존 뉴스·종가 회귀를 포함해 로컬 전체 163개 테스트가 통과했다.
+
+## KST 일요일 자동 발송 제외 (2026-10-19)
+
+현재 예약은 `0 23 * * 0-5`: UTC 일~금 23:00 = KST 월~토 08:00이다.
+KST 일요일에 해당하는 UTC 토요일만 제외한다. 토요일 아침 브리핑은 유지한다.
+예약 실행이 지연되거나 재실행되어 KST 일요일에 도달하면 ledger gate에서
+`skip`한다. started artifact를 저장한 뒤에도 전송 직전 실제 KST 요일을 다시
+확인한다. 이때 일요일이면 Telegram을 호출하지 않고 기존 `rejected` 결과를
+기록한다(전송하지 않았음이 확실하므로 sent/unknown으로 기록하지 않는다).
+기존 날짜 rollover 거부, artifact 출처 검증, unknown/sent 중복 방지 및 concurrency는
+유지한다. 일요일 수동 preview/send는 기존 동작과 승인·중복 방지 규칙을 따른다.
+
+### 10월 19일 09:36 지연 확인
+
+[실제 예약 실행 39181387727](https://github.com/greatoneq0/AssetLab/actions/runs/39181387727)
+및 [job 단계 시각](https://github.com/greatoneq0/AssetLab/actions/runs/39181387727/job/117834691310)
+(API UTC 시각에 9시간을 더함):
+
+| 항목 | 2026-10-19 KST |
+|---|---|
+| 예약 목표 | 08:00:00 |
+| run 생성 / run_started_at | 09:34:34 |
+| runner job 시작 | 09:34:37 |
+| 브리핑 생성 | 09:34:53~09:36:14 (81초) |
+| Telegram 발송 단계 (success) | 09:36:17~09:36:19 |
+| job 완료 | 09:36:22 |
+
+예약 목표부터 run 생성까지 94분 34초, 이후 runner 시작까지 3초,
+runner 시작부터 발송 단계 완료까지 1분 42초다. 지연 대부분은 작업 자체가 아닌
+예약 실행 시작 전 구간이다. GitHub 내부 지연 원인을 이 metadata만으로 더 세분할
+수는 없다. 위 발송 시각은 성공한 Actions 단계 범위이며 휴대전화 알림 도착 시각은 아니다.
+
+[GitHub 공식 schedule 안내](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)는
+특히 정시 부하 때 예약 실행 지연이나 누락이 가능함을 명시한다. 기존 pip 캐시와
+작업 최적화는 준비 시간을 줄일 수 있지만 이번 94분의 시작 지연을 해결하지 못한다.
+정시를 피한 예약은 목표 시각 변경이 필요하며 정확한 08:00 도착도 보장하지 않는다.
+이번에는 08:00 목표를 유지하고 추가 cron, runner 장시간 대기, 외부 서비스,
+자격증명을 추가하지 않았다. 이 인프라만으로 정확한 08:00 도착 SLA는 제공할 수 없다.
+변경은 main 병합 후 예약에 반영되며, 별도 ETF 조회 끝 날짜/freshness 수정은 포함하지 않는다.

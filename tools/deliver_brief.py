@@ -33,7 +33,10 @@ def main():
     message=Path(args.message).read_text()
     token=os.environ.get('TELEGRAM_BOT_TOKEN')
     chat_id=os.environ.get('TELEGRAM_CHAT_ID')
-    if (args.day != datetime.now(ZoneInfo('Asia/Seoul')).date().isoformat()
+    # Recheck at the transport boundary: a queued scheduled run may reach Sunday.
+    now = datetime.now(ZoneInfo('Asia/Seoul'))
+    if ((os.environ.get('GITHUB_EVENT_NAME') == 'schedule' and now.weekday() == 6)
+            or args.day != now.date().isoformat()
             or not token or not chat_id or not 1 <= len(message.encode('utf-16-le'))//2 <=4096):
         status='rejected'
     else:

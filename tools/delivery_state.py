@@ -127,7 +127,13 @@ def main():
     p.add_argument('--manual', action='store_true')
     p.add_argument('--approved-retry', action='store_true')
     args = p.parse_args()
-    if args.day != datetime.now(ZoneInfo('Asia/Seoul')).date().isoformat():
+    now = datetime.now(ZoneInfo('Asia/Seoul'))
+    if os.environ.get('GITHUB_EVENT_NAME') == 'schedule' and now.weekday() == 6:
+        print('delivery decision=skip reason=scheduled_kst_sunday')
+        with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+            output.write('decision=skip\n')
+        return 0
+    if args.day != now.date().isoformat():
         raise SystemExit('Delivery date changed; rebuild before attempting delivery')
     repo = os.environ['GITHUB_REPOSITORY']
     if not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repo):

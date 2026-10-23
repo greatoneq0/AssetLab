@@ -2,7 +2,8 @@ name: Daily market news (Telegram)
 on:
   schedule:
     # 23:00 UTC = 08:00 KST. Best-effort start time, not an arrival SLA.
-    - cron: "0 23 * * *"
+    # UTC Sun–Fri maps to KST Mon–Sat; UTC Saturday would be KST Sunday.
+    - cron: "0 23 * * 0-5"
   workflow_dispatch:
     inputs:
       mode:
